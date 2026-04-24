@@ -24,23 +24,38 @@ Provide:
 
 Format your response clearly with these 3 sections labeled.`;
 
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+
 async function generateWithGroq(prompt: string): Promise<string> {
-  const client = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  const completion = await client.chat.completions.create({
-    model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 500,
-    temperature: 0.7,
-  });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("GROQ_API_KEY not set");
+  const client = new Groq({ apiKey });
+  const completion = await withTimeout(
+    client.chat.completions.create({
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 500,
+      temperature: 0.7,
+    }),
+    8000
+  );
   return completion.choices[0]?.message?.content || "";
 }
 
 async function generateWithGemini(prompt: string): Promise<string> {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY not set");
+  const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
   });
-  const result = await model.generateContent(prompt);
+  const result = await withTimeout(model.generateContent(prompt), 8000);
   return result.response.text();
 }
 
@@ -78,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     let result = "";
     let usedProvider = "";
-    let lastError = null;
+    const errors: Record<string, string> = {};
 
     for (const provider of providers) {
       try {
@@ -88,16 +103,17 @@ export async function POST(request: NextRequest) {
           break;
         }
       } catch (err) {
-        lastError = err;
-        console.warn(`Provider ${provider.name} failed:`, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        errors[provider.name] = msg;
+        console.warn(`Provider ${provider.name} failed: ${msg}`);
         continue;
       }
     }
 
     if (!result) {
-      console.error("All providers failed:", lastError);
+      console.error("All providers failed:", errors);
       return NextResponse.json(
-        { error: "Failed to generate content. Please try again." },
+        { error: "Failed to generate content. Please try again.", errors },
         { status: 500 }
       );
     }
