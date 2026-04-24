@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Anthropic from "@anthropic-ai/sdk";
 
-const buildPrompt = (data: {
+type InvoiceData = {
   service: string;
   clientType: string;
   amount: string;
@@ -21,7 +21,9 @@ const buildPrompt = (data: {
   // Optional invoice meta
   invoiceNumber?: string;
   dueDate?: string;
-}) => {
+};
+
+const buildPrompt = (data: InvoiceData) => {
   const isQuote = data.docType === "quote";
   const docLabel = isQuote ? "Quote / Estimate" : "Invoice";
 
@@ -52,6 +54,39 @@ Provide the following 3 sections, clearly labeled:
 3. **${isQuote ? "Next Steps" : "Thank You Note"}** (1-2 sentences — ${isQuote ? "what happens after the client accepts the quote" : "a warm professional closing"})
 
 ${senderBlock || clientBlock ? "Use the provided names/company info naturally in the text where appropriate." : "Keep the text generic enough to fill in names manually."}`;
+};
+
+// Static system prompt — cached by Anthropic after first call (~90% cheaper on repeats)
+const CLAUDE_SYSTEM_PROMPT = `You are a professional invoice and quote writer. Generate concise, professional text for business documents.
+
+Always respond with exactly 3 clearly labeled sections:
+- For invoices: **Invoice Line Item Description** (1-2 sentences), **Payment Terms** (2-3 sentences on due date, late fees, accepted payment methods), **Thank You Note** (1-2 warm closing sentences)
+- For quotes: **Quote Line Item Description** (1-2 sentences), **Payment Terms** (2-3 sentences on quote validity, timeline, payment expectations), **Next Steps** (1-2 sentences on what happens after the client accepts)
+
+Use any provided sender/client names and company info naturally in the text. If none are provided, keep text generic enough to fill in manually. Match the requested tone. Be concise.`;
+
+const buildClaudeUserMessage = (data: InvoiceData): string => {
+  const isQuote = data.docType === "quote";
+  const docLabel = isQuote ? "Quote / Estimate" : "Invoice";
+  const senderBlock = [data.yourName, data.yourCompany, data.yourEmail, data.yourPhone]
+    .filter(Boolean)
+    .join(", ");
+  const clientBlock = [data.clientName, data.clientCompany]
+    .filter(Boolean)
+    .join(", ");
+
+  return [
+    `Generate a professional ${docLabel} for:`,
+    `Service: ${data.service}`,
+    `Client Type: ${data.clientType}`,
+    `Amount: ${data.amount}`,
+    `Tone: ${data.tone}`,
+    senderBlock ? `From: ${senderBlock}` : "",
+    clientBlock ? `To: ${clientBlock}` : "",
+    data.invoiceNumber ? `${docLabel} Number: ${data.invoiceNumber}` : "",
+    data.dueDate ? `Due Date: ${data.dueDate}` : "",
+    data.details ? `Additional Details: ${data.details}` : "",
+  ].filter(Boolean).join("\n");
 };
 
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
@@ -89,12 +124,19 @@ async function generateWithGemini(prompt: string): Promise<string> {
   return result.response.text();
 }
 
-async function generateWithClaude(prompt: string): Promise<string> {
+async function generateWithClaude(data: InvoiceData): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const message = await client.messages.create({
     model: (process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001").trim(),
     max_tokens: 600,
-    messages: [{ role: "user", content: prompt }],
+    system: [
+      {
+        type: "text",
+        text: CLAUDE_SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: buildClaudeUserMessage(data) }],
   });
   const block = message.content[0];
   return block.type === "text" ? block.text : "";
@@ -118,17 +160,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = buildPrompt({
+    const data: InvoiceData = {
       service, clientType, amount, tone, details, docType,
       yourName, yourCompany, yourEmail, yourPhone,
       clientName, clientCompany,
       invoiceNumber, dueDate,
-    });
+    };
+
+    const prompt = buildPrompt(data);
 
     const providers = [
       { name: "groq", fn: () => generateWithGroq(prompt) },
       { name: "gemini", fn: () => generateWithGemini(prompt) },
-      { name: "claude", fn: () => generateWithClaude(prompt) },
+      { name: "claude", fn: () => generateWithClaude(data) },
     ];
 
     let result = "";
