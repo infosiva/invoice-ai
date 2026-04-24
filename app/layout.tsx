@@ -11,11 +11,16 @@ export const metadata: Metadata = {
     "Generate professional invoices, quotes, and payment terms instantly with AI. Free invoice generator for freelancers and small businesses. No signup required.",
   keywords:
     "free invoice generator, AI invoice generator, quote generator, invoice description, professional invoice, freelance invoice, small business invoice",
+  metadataBase: new URL("https://invoicemint.cloud"),
   openGraph: {
     title: "InvoiceMint — Free AI Invoice & Quote Generator",
     description:
       "Generate professional invoices and quotes instantly. Free AI tool for freelancers and businesses. No signup required.",
     type: "website",
+    url: "https://invoicemint.cloud",
+  },
+  alternates: {
+    canonical: "https://invoicemint.cloud",
   },
   robots: "index, follow",
 };
