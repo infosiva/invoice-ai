@@ -9,20 +9,50 @@ const buildPrompt = (data: {
   amount: string;
   tone: string;
   details: string;
-}) => `Generate a professional invoice description for the following:
+  docType: string;
+  // Optional sender info
+  yourName?: string;
+  yourCompany?: string;
+  yourEmail?: string;
+  yourPhone?: string;
+  // Optional client info
+  clientName?: string;
+  clientCompany?: string;
+  // Optional invoice meta
+  invoiceNumber?: string;
+  dueDate?: string;
+}) => {
+  const isQuote = data.docType === "quote";
+  const docLabel = isQuote ? "Quote / Estimate" : "Invoice";
+
+  const senderBlock = [data.yourName, data.yourCompany, data.yourEmail, data.yourPhone]
+    .filter(Boolean)
+    .join(", ");
+  const clientBlock = [data.clientName, data.clientCompany]
+    .filter(Boolean)
+    .join(", ");
+
+  return `Generate a professional ${docLabel} text for the following:
 
 Service: ${data.service}
 Client Type: ${data.clientType}
 Amount: ${data.amount}
 Tone: ${data.tone}
+Document Type: ${docLabel}
+${senderBlock ? `From (service provider): ${senderBlock}` : ""}
+${clientBlock ? `To (client): ${clientBlock}` : ""}
+${data.invoiceNumber ? `${docLabel} Number: ${data.invoiceNumber}` : ""}
+${data.dueDate ? `Due Date: ${data.dueDate}` : ""}
 Additional Details: ${data.details || "None"}
 
-Provide:
-1. A professional invoice line item description (1-2 sentences)
-2. Payment terms text (2-3 sentences)
-3. A short thank you note (1-2 sentences)
+Provide the following 3 sections, clearly labeled:
 
-Format your response clearly with these 3 sections labeled.`;
+1. **${isQuote ? "Quote" : "Invoice"} Line Item Description** (1-2 sentences describing the service professionally)
+2. **Payment Terms** (2-3 sentences${isQuote ? " outlining quote validity, expected timeline, and payment expectations" : " covering due date, late fees, and accepted payment methods"})
+3. **${isQuote ? "Next Steps" : "Thank You Note"}** (1-2 sentences — ${isQuote ? "what happens after the client accepts the quote" : "a warm professional closing"})
+
+${senderBlock || clientBlock ? "Use the provided names/company info naturally in the text where appropriate." : "Keep the text generic enough to fill in names manually."}`;
+};
 
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([
@@ -38,9 +68,9 @@ async function generateWithGroq(prompt: string): Promise<string> {
   const client = new Groq({ apiKey });
   const completion = await withTimeout(
     client.chat.completions.create({
-      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      model: (process.env.GROQ_MODEL || "llama-3.3-70b-versatile").trim(),
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 500,
+      max_tokens: 600,
       temperature: 0.7,
     }),
     8000
@@ -53,7 +83,7 @@ async function generateWithGemini(prompt: string): Promise<string> {
   if (!apiKey) throw new Error("GEMINI_API_KEY not set");
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+    model: (process.env.GEMINI_MODEL || "gemini-1.5-flash").trim(),
   });
   const result = await withTimeout(model.generateContent(prompt), 8000);
   return result.response.text();
@@ -62,8 +92,8 @@ async function generateWithGemini(prompt: string): Promise<string> {
 async function generateWithClaude(prompt: string): Promise<string> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const message = await client.messages.create({
-    model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
-    max_tokens: 500,
+    model: (process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001").trim(),
+    max_tokens: 600,
     messages: [{ role: "user", content: prompt }],
   });
   const block = message.content[0];
@@ -73,7 +103,13 @@ async function generateWithClaude(prompt: string): Promise<string> {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { service, clientType, amount, tone, details } = body;
+    const {
+      service, clientType, amount, tone, details,
+      docType = "invoice",
+      yourName, yourCompany, yourEmail, yourPhone,
+      clientName, clientCompany,
+      invoiceNumber, dueDate,
+    } = body;
 
     if (!service || !clientType || !amount || !tone) {
       return NextResponse.json(
@@ -82,9 +118,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = buildPrompt({ service, clientType, amount, tone, details });
+    const prompt = buildPrompt({
+      service, clientType, amount, tone, details, docType,
+      yourName, yourCompany, yourEmail, yourPhone,
+      clientName, clientCompany,
+      invoiceNumber, dueDate,
+    });
 
-    // Try providers in order: Groq → Gemini → Claude
     const providers = [
       { name: "groq", fn: () => generateWithGroq(prompt) },
       { name: "gemini", fn: () => generateWithGemini(prompt) },

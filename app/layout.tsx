@@ -6,15 +6,15 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Free AI Invoice Description Generator | Professional Invoice Text",
+  title: "InvoiceMint — Free AI Invoice & Quote Generator",
   description:
-    "Generate professional invoice line items, payment terms, and thank-you notes instantly with AI. Free invoice description generator for freelancers and small businesses.",
+    "Generate professional invoices, quotes, and payment terms instantly with AI. Free invoice generator for freelancers and small businesses. No signup required.",
   keywords:
-    "invoice description generator, AI invoice generator, free invoice tool, invoice line items, professional invoice text",
+    "free invoice generator, AI invoice generator, quote generator, invoice description, professional invoice, freelance invoice, small business invoice",
   openGraph: {
-    title: "Free AI Invoice Description Generator",
+    title: "InvoiceMint — Free AI Invoice & Quote Generator",
     description:
-      "Generate professional invoice descriptions instantly. Free AI tool for freelancers and businesses.",
+      "Generate professional invoices and quotes instantly. Free AI tool for freelancers and businesses. No signup required.",
     type: "website",
   },
   robots: "index, follow",
