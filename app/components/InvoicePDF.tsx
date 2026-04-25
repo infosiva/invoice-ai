@@ -93,10 +93,7 @@ export default function InvoicePDF({
       <Page size="A4" style={s.page}>
         {/* Header */}
         <View style={s.headerRow}>
-          <View>
-            <Text style={s.brandName}>InvoiceMint</Text>
-            <Text style={s.brandTag}>AI-Powered Document Generator</Text>
-          </View>
+          <View />
           <View style={s.docRight}>
             <Text style={s.docTypeText}>{label}</Text>
             {invoiceNumber ? <Text style={s.docNumText}>#{invoiceNumber}</Text> : null}
@@ -166,8 +163,8 @@ export default function InvoicePDF({
 
         {/* Footer */}
         <View style={s.footer}>
-          <Text style={s.footerLeft}>Generated with InvoiceMint — AI Invoice &amp; Quote Generator</Text>
-          <Text style={s.footerRight}>invoicemint.ai</Text>
+          <Text style={s.footerLeft}> </Text>
+          <Text style={s.footerRight}> </Text>
         </View>
       </Page>
     </Document>

@@ -20,6 +20,17 @@ interface FormData {
   dueDate: string;
 }
 
+interface HistoryEntry {
+  id: string;
+  date: string;
+  service: string;
+  amount: string;
+  docType: "invoice" | "quote";
+  clientName: string;
+  form: FormData;
+  result: string;
+}
+
 const EMPTY_FORM: FormData = {
   service: "", clientType: "", amount: "", tone: "formal",
   details: "", docType: "invoice",
@@ -27,6 +38,23 @@ const EMPTY_FORM: FormData = {
   clientName: "", clientCompany: "",
   invoiceNumber: "", dueDate: "",
 };
+
+const HISTORY_KEY = "invoicemint_history";
+const MAX_HISTORY = 5;
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch { return []; }
+}
+
+function saveToHistory(entry: HistoryEntry) {
+  try {
+    const existing = loadHistory();
+    const updated = [entry, ...existing.filter(e => e.id !== entry.id)].slice(0, MAX_HISTORY);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  } catch { /* ignore */ }
+}
 
 type VoiceField = "service" | "details";
 
@@ -40,23 +68,35 @@ export default function Home() {
   const [voiceField, setVoiceField] = useState<VoiceField | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfDownloaded, setPdfDownloaded] = useState(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     setVoiceSupported(
       !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
     );
+    setHistory(loadHistory());
   }, []);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleReset = () => {
+    setForm(EMPTY_FORM);
+    setResult("");
+    setError("");
+    setPdfDownloaded(false);
+    setShowOptional(false);
+  };
+
+  const generate = async () => {
     setLoading(true);
     setError("");
     setResult("");
+    setPdfDownloaded(false);
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -66,11 +106,28 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate");
       setResult(data.result);
+      const entry: HistoryEntry = {
+        id: Date.now().toString(),
+        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        service: form.service,
+        amount: form.amount,
+        docType: form.docType,
+        clientName: form.clientName || form.clientCompany || "",
+        form,
+        result: data.result,
+      };
+      saveToHistory(entry);
+      setHistory(loadHistory());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await generate();
   };
 
   const handleCopy = async () => {
@@ -135,6 +192,7 @@ export default function Home() {
       link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
       document.body.appendChild(link); link.click();
       document.body.removeChild(link); URL.revokeObjectURL(url);
+      setPdfDownloaded(true);
     } catch (err) {
       console.error("PDF error:", err);
     } finally {
@@ -214,6 +272,28 @@ export default function Home() {
                 </svg>
                 Voice on
               </span>
+            )}
+            {history.length > 0 && (
+              <button
+                onClick={() => setShowHistory(v => !v)}
+                className="flex items-center gap-1 text-xs text-slate-600 font-medium bg-slate-50 hover:bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Recent
+              </button>
+            )}
+            {result && (
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-1 text-xs text-white font-semibold bg-emerald-500 hover:bg-emerald-600 px-2.5 py-1 rounded-full transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New
+              </button>
             )}
             <span className="text-xs bg-emerald-50 text-emerald-700 font-medium px-2.5 py-1 rounded-full border border-emerald-200">
               Free forever
@@ -635,6 +715,83 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* ── Recent invoices history panel ── */}
+      {showHistory && history.length > 0 && (
+        <div className="max-w-6xl mx-auto w-full px-4 mt-4">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-slate-700">Recent Documents</h2>
+              <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-600">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="space-y-2">
+              {history.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-emerald-200 cursor-pointer transition-colors group"
+                  onClick={() => {
+                    setForm(entry.form);
+                    setResult(entry.result);
+                    setPdfDownloaded(false);
+                    setShowHistory(false);
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${entry.docType === "invoice" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>
+                      {entry.docType}
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-700">{entry.service}</p>
+                      {entry.clientName && <p className="text-[10px] text-slate-400">{entry.clientName}</p>}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 ml-4">
+                    <p className="text-xs font-bold text-emerald-600">{entry.amount}</p>
+                    <p className="text-[10px] text-slate-400">{entry.date}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-3 text-center">Stored locally in your browser — never sent to any server</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Generate Another CTA (shown after PDF download) ── */}
+      {pdfDownloaded && (
+        <div className="max-w-6xl mx-auto w-full px-4 mt-4">
+          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-bold text-emerald-800">PDF downloaded!</p>
+              <p className="text-xs text-emerald-700 mt-0.5">Need another invoice or quote? Start fresh in seconds.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleReset}
+                className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs px-4 py-2 rounded-lg transition-colors shadow-sm"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New {isQuote ? "Quote" : "Invoice"}
+              </button>
+              <button
+                onClick={generate}
+                className="flex items-center gap-1.5 bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-700 font-semibold text-xs px-4 py-2 rounded-lg transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Regenerate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Below fold: SEO content ── */}
       <div className="max-w-6xl mx-auto w-full px-4 pb-12 space-y-8 mt-6">
