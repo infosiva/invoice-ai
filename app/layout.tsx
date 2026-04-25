@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "InvoiceMint — Free AI Invoice & Quote Generator",
   description:
-    "Generate professional invoices, quotes, and payment terms instantly with AI. Free invoice generator for freelancers and small businesses. No signup required.",
+    "Effortlessly create professional invoices, quotes & payment terms with AI. Free online invoice generator for freelancers & small businesses. Fast, easy, no signup required.",
   keywords:
     "free invoice generator, AI invoice generator, quote generator, invoice description, professional invoice, freelance invoice, small business invoice",
   metadataBase: new URL("https://invoicemint.cloud"),
