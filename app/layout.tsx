@@ -6,7 +6,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "InvoiceMint — Free AI Invoice & Quote Generator",
+  title: "InvoiceMint — AI-Powered Free Invoice & Quote Generator for Freelancers & Small Businesses",
   description:
     "Effortlessly create professional invoices, quotes & payment terms with AI. Free online invoice generator for freelancers & small businesses. Fast, easy, no signup required.",
   keywords:

@@ -1,4 +1,4 @@
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+<AdBanner slotId="YOUR_SLOT_ID" />import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 
 const EM = "#10b981";
 const DARK = "#1e293b";
