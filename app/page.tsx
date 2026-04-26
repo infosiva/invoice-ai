@@ -92,7 +92,7 @@ export default function Home() {
     setShowOptional(false);
   };
 
-  const Create Your Invoice or Quote Now = async () => {
+  const createInvoiceOrQuote = async () => {
     setLoading(true);
     setError("");
     setResult("");
