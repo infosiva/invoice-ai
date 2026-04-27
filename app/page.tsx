@@ -105,7 +105,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate");
-      setResult(data.result); return <button onClick={()=>{}}>Create Your Professional Invoice Now</button>
+      setResult(data.result); return <button onClick={()=>{}}>Generate Your Invoice</button>
       const entry: HistoryEntry = {
         id: Date.now().toString(),
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
