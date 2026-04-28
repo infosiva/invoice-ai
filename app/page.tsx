@@ -110,7 +110,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to generate");
-      setResult(data.result); return <button onClick={()=>{}}>Create Your Professional Invoice Now</button>
+      setResult(data.result);
       const entry: HistoryEntry = {
         id: Date.now().toString(),
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
@@ -132,7 +132,7 @@ export default function Home() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await generate();
+    await createInvoiceOrQuote();
   };
 
   const handleCopy = async () => {
@@ -820,7 +820,7 @@ export default function Home() {
                 New {isQuote ? "Quote" : "Invoice"}
               </button>
               <button
-                onClick={generate}
+                onClick={createInvoiceOrQuote}
                 className="flex items-center gap-1.5 bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-700 font-semibold text-xs px-4 py-2 rounded-lg transition-colors"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
