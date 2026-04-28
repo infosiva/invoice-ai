@@ -123,6 +123,8 @@ export default function Home() {
       };
       saveToHistory(entry);
       setHistory(loadHistory());
+      // Reset job-specific fields; keep company/contact details for next invoice
+      setForm(p => ({ ...p, service: "", amount: "", invoiceNumber: "", dueDate: "", notes: "" }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -579,7 +581,6 @@ export default function Home() {
                 <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-5 py-4">
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-emerald-200 text-[10px] font-bold uppercase tracking-widest mb-0.5">InvoiceMint</p>
                       <h2 className="text-white text-xl font-black uppercase tracking-wider">
                         {isQuote ? "Quote" : "Invoice"}
                       </h2>
@@ -598,14 +599,15 @@ export default function Home() {
                 </div>
 
                 {/* From / To */}
-                {(form.yourName || form.yourCompany || form.clientName || form.clientCompany) && (
+                {(form.yourName || form.yourCompany || form.yourEmail || form.yourPhone || form.clientName || form.clientCompany) && (
                   <div className="grid grid-cols-2 gap-4 px-5 py-3 bg-slate-50 border-b border-slate-100">
-                    {(form.yourName || form.yourCompany) && (
+                    {(form.yourName || form.yourCompany || form.yourEmail || form.yourPhone) && (
                       <div>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">From</p>
                         {form.yourName && <p className="text-xs font-semibold text-slate-800">{form.yourName}</p>}
                         {form.yourCompany && <p className="text-xs text-slate-500">{form.yourCompany}</p>}
                         {form.yourEmail && <p className="text-xs text-slate-500">{form.yourEmail}</p>}
+                        {form.yourPhone && <p className="text-xs text-slate-500">{form.yourPhone}</p>}
                       </div>
                     )}
                     {(form.clientName || form.clientCompany) && (
@@ -656,6 +658,13 @@ export default function Home() {
                     </>
                   )}
                 </div>
+
+                {/* Footer note */}
+                {form.footerNote && (
+                  <div className="mx-5 mb-3 pt-3 border-t border-slate-100">
+                    <p className="text-[10px] text-slate-400">{form.footerNote}</p>
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50">
