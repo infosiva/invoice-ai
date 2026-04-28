@@ -1,4 +1,4 @@
-<AdBanner slotId="YOUR_SLOT_ID" label="Sponsored Content" style={{ margin: '20px' }} />import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 
 const EM = "#10b981";
 const DARK = "#1e293b";
@@ -11,9 +11,7 @@ const s = StyleSheet.create({
   page: { padding: 48, fontFamily: "Helvetica", fontSize: 10, color: DARK, backgroundColor: "#fff" },
 
   // Header
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 },
-  brandName: { fontSize: 18, fontFamily: "Helvetica-Bold", color: EM },
-  brandTag: { fontSize: 7.5, color: LIGHT, marginTop: 3 },
+  headerRow: { flexDirection: "row", justifyContent: "flex-end", alignItems: "flex-start", marginBottom: 16 },
   docRight: { alignItems: "flex-end" },
   docTypeText: { fontSize: 26, fontFamily: "Helvetica-Bold", color: DARK },
   docNumText: { fontSize: 9, color: MID, marginTop: 3 },
@@ -93,7 +91,6 @@ export default function InvoicePDF({
       <Page size="A4" style={s.page}>
         {/* Header */}
         <View style={s.headerRow}>
-          <View />
           <View style={s.docRight}>
             <Text style={s.docTypeText}>{label}</Text>
             {invoiceNumber ? <Text style={s.docNumText}>#{invoiceNumber}</Text> : null}
