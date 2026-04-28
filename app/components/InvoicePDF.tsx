@@ -1,24 +1,23 @@
-import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
 
-const EM = "#10b981";
 const DARK = "#1e293b";
 const MID = "#475569";
 const LIGHT = "#94a3b8";
 const BORDER = "#e2e8f0";
-const BG_GREEN = "#ecfdf5";
 
-const s = StyleSheet.create({
+// styles that don't depend on accent colour
+const base = StyleSheet.create({
   page: { padding: 48, fontFamily: "Helvetica", fontSize: 10, color: DARK, backgroundColor: "#fff" },
 
   // Header
-  headerRow: { flexDirection: "row", justifyContent: "flex-end", alignItems: "flex-start", marginBottom: 16 },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
+  logoImg: { maxHeight: 48, maxWidth: 140, objectFit: "contain" },
   docRight: { alignItems: "flex-end" },
   docTypeText: { fontSize: 26, fontFamily: "Helvetica-Bold", color: DARK },
   docNumText: { fontSize: 9, color: MID, marginTop: 3 },
   docDateText: { fontSize: 8.5, color: LIGHT, marginTop: 2 },
 
   // Divider
-  greenLine: { height: 2.5, backgroundColor: EM, marginBottom: 20 },
   thinLine: { height: 1, backgroundColor: BORDER, marginVertical: 12 },
 
   // Parties
@@ -29,21 +28,29 @@ const s = StyleSheet.create({
   partyDetail: { fontSize: 9, color: MID, marginBottom: 1 },
 
   // Amount box
-  amountBox: { backgroundColor: BG_GREEN, borderRadius: 6, padding: "12 16", flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   amountLeft: {},
-  amountServiceLabel: { fontSize: 8, color: "#065f46", fontFamily: "Helvetica-Bold", marginBottom: 3, letterSpacing: 0.5 },
-  amountServiceName: { fontSize: 11, fontFamily: "Helvetica-Bold", color: "#064e3b" },
-  amountValue: { fontSize: 22, fontFamily: "Helvetica-Bold", color: EM },
+  amountServiceLabel: { fontSize: 8, fontFamily: "Helvetica-Bold", marginBottom: 3, letterSpacing: 0.5 },
+  amountServiceName: { fontSize: 11, fontFamily: "Helvetica-Bold" },
+  amountValue: { fontSize: 22, fontFamily: "Helvetica-Bold" },
 
   // Sections
-  sectionLabel: { fontSize: 7.5, fontFamily: "Helvetica-Bold", color: EM, letterSpacing: 1.5, marginBottom: 5, marginTop: 14 },
   sectionText: { fontSize: 9.5, color: MID, lineHeight: 1.7 },
 
   // Footer
   footer: { position: "absolute", bottom: 28, left: 48, right: 48, borderTop: `1 solid ${BORDER}`, paddingTop: 8, flexDirection: "row", justifyContent: "space-between" },
-  footerLeft: { fontSize: 7.5, color: LIGHT },
-  footerRight: { fontSize: 7.5, color: EM, fontFamily: "Helvetica-Bold" },
+  footerText: { fontSize: 7.5, color: LIGHT },
 });
+
+// Accent-dependent styles built at render time
+function accentStyles(em: string) {
+  // Derive a very light tint for backgrounds (~12% opacity approximated as hex blend with white)
+  return StyleSheet.create({
+    accentLine: { height: 2.5, backgroundColor: em, marginBottom: 20 },
+    amountBox: { borderRadius: 6, padding: "12 16", flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20, border: `1 solid ${em}30`, backgroundColor: `${em}12` },
+    sectionLabel: { fontSize: 7.5, fontFamily: "Helvetica-Bold", color: em, letterSpacing: 1.5, marginBottom: 5, marginTop: 14 },
+    footerAccent: { fontSize: 7.5, color: em, fontFamily: "Helvetica-Bold" },
+  });
+}
 
 function parseAIOutput(text: string) {
   const clean = text.replace(/\*\*/g, "").trim();
@@ -72,6 +79,9 @@ export interface InvoicePDFProps {
   amount: string;
   generatedText: string;
   issueDate: string;
+  logoUrl?: string;
+  accentColor?: string;
+  footerNote?: string;
 }
 
 export default function InvoicePDF({
@@ -79,89 +89,96 @@ export default function InvoicePDF({
   yourName, yourCompany, yourEmail, yourPhone,
   clientName, clientCompany,
   service, amount, generatedText, issueDate,
+  logoUrl, accentColor = "#10b981", footerNote,
 }: InvoicePDFProps) {
   const isQuote = docType === "quote";
   const label = isQuote ? "QUOTE" : "INVOICE";
   const sections = parseAIOutput(generatedText);
   const hasFrom = yourName || yourCompany || yourEmail || yourPhone;
   const hasTo = clientName || clientCompany;
+  const a = accentStyles(accentColor);
 
   return (
     <Document>
-      <Page size="A4" style={s.page}>
+      <Page size="A4" style={base.page}>
         {/* Header */}
-        <View style={s.headerRow}>
-          <View style={s.docRight}>
-            <Text style={s.docTypeText}>{label}</Text>
-            {invoiceNumber ? <Text style={s.docNumText}>#{invoiceNumber}</Text> : null}
-            <Text style={s.docDateText}>Issued: {issueDate}</Text>
+        <View style={base.headerRow}>
+          {logoUrl ? (
+            <Image src={logoUrl} style={base.logoImg} />
+          ) : (
+            <View />
+          )}
+          <View style={base.docRight}>
+            <Text style={base.docTypeText}>{label}</Text>
+            {invoiceNumber ? <Text style={base.docNumText}>#{invoiceNumber}</Text> : null}
+            <Text style={base.docDateText}>Issued: {issueDate}</Text>
             {dueDate ? (
-              <Text style={s.docDateText}>{isQuote ? "Valid Until" : "Due"}: {dueDate}</Text>
+              <Text style={base.docDateText}>{isQuote ? "Valid Until" : "Due"}: {dueDate}</Text>
             ) : null}
           </View>
         </View>
 
-        <View style={s.greenLine} />
+        <View style={a.accentLine} />
 
         {/* Parties */}
         {(hasFrom || hasTo) && (
-          <View style={s.partiesRow}>
+          <View style={base.partiesRow}>
             {hasFrom && (
-              <View style={s.partyBlock}>
-                <Text style={s.partyLabel}>FROM</Text>
-                {yourName ? <Text style={s.partyName}>{yourName}</Text> : null}
-                {yourCompany ? <Text style={s.partyDetail}>{yourCompany}</Text> : null}
-                {yourEmail ? <Text style={s.partyDetail}>{yourEmail}</Text> : null}
-                {yourPhone ? <Text style={s.partyDetail}>{yourPhone}</Text> : null}
+              <View style={base.partyBlock}>
+                <Text style={base.partyLabel}>FROM</Text>
+                {yourName ? <Text style={base.partyName}>{yourName}</Text> : null}
+                {yourCompany ? <Text style={base.partyDetail}>{yourCompany}</Text> : null}
+                {yourEmail ? <Text style={base.partyDetail}>{yourEmail}</Text> : null}
+                {yourPhone ? <Text style={base.partyDetail}>{yourPhone}</Text> : null}
               </View>
             )}
             {hasTo && (
-              <View style={s.partyBlock}>
-                <Text style={s.partyLabel}>BILL TO</Text>
-                {clientName ? <Text style={s.partyName}>{clientName}</Text> : null}
-                {clientCompany ? <Text style={s.partyDetail}>{clientCompany}</Text> : null}
+              <View style={base.partyBlock}>
+                <Text style={base.partyLabel}>BILL TO</Text>
+                {clientName ? <Text style={base.partyName}>{clientName}</Text> : null}
+                {clientCompany ? <Text style={base.partyDetail}>{clientCompany}</Text> : null}
               </View>
             )}
           </View>
         )}
 
         {/* Amount Box */}
-        <View style={s.amountBox}>
-          <View style={s.amountLeft}>
-            <Text style={s.amountServiceLabel}>SERVICE</Text>
-            <Text style={s.amountServiceName}>{service}</Text>
+        <View style={a.amountBox}>
+          <View style={base.amountLeft}>
+            <Text style={[base.amountServiceLabel, { color: accentColor }]}>SERVICE</Text>
+            <Text style={base.amountServiceName}>{service}</Text>
           </View>
-          <Text style={s.amountValue}>{amount}</Text>
+          <Text style={[base.amountValue, { color: accentColor }]}>{amount}</Text>
         </View>
 
         {/* AI Sections */}
         {sections.lineItem ? (
           <>
-            <Text style={s.sectionLabel}>{isQuote ? "QUOTE DESCRIPTION" : "SERVICE DESCRIPTION"}</Text>
-            <Text style={s.sectionText}>{sections.lineItem}</Text>
+            <Text style={a.sectionLabel}>{isQuote ? "QUOTE DESCRIPTION" : "SERVICE DESCRIPTION"}</Text>
+            <Text style={base.sectionText}>{sections.lineItem}</Text>
           </>
         ) : null}
 
         {sections.paymentTerms ? (
           <>
-            <View style={s.thinLine} />
-            <Text style={s.sectionLabel}>PAYMENT TERMS</Text>
-            <Text style={s.sectionText}>{sections.paymentTerms}</Text>
+            <View style={base.thinLine} />
+            <Text style={a.sectionLabel}>PAYMENT TERMS</Text>
+            <Text style={base.sectionText}>{sections.paymentTerms}</Text>
           </>
         ) : null}
 
         {sections.closing ? (
           <>
-            <View style={s.thinLine} />
-            <Text style={s.sectionLabel}>{sections.closingLabel}</Text>
-            <Text style={s.sectionText}>{sections.closing}</Text>
+            <View style={base.thinLine} />
+            <Text style={a.sectionLabel}>{sections.closingLabel}</Text>
+            <Text style={base.sectionText}>{sections.closing}</Text>
           </>
         ) : null}
 
         {/* Footer */}
-        <View style={s.footer}>
-          <Text style={s.footerLeft}> </Text>
-          <Text style={s.footerRight}> </Text>
+        <View style={base.footer}>
+          <Text style={base.footerText}>{footerNote ?? " "}</Text>
+          <Text style={a.footerAccent}>{yourName || yourCompany || " "}</Text>
         </View>
       </Page>
     </Document>

@@ -18,6 +18,10 @@ interface FormData {
   clientCompany: string;
   invoiceNumber: string;
   dueDate: string;
+  // Branding
+  logoUrl: string;
+  accentColor: string;
+  footerNote: string;
 }
 
 interface HistoryEntry {
@@ -37,6 +41,7 @@ const EMPTY_FORM: FormData = {
   yourName: "", yourCompany: "", yourEmail: "", yourPhone: "",
   clientName: "", clientCompany: "",
   invoiceNumber: "", dueDate: "",
+  logoUrl: "", accentColor: "#10b981", footerNote: "",
 };
 
 const HISTORY_KEY = "invoicemint_history";
@@ -184,6 +189,9 @@ export default function Home() {
           amount: form.amount,
           generatedText: result,
           issueDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+          logoUrl: form.logoUrl,
+          accentColor: form.accentColor || "#10b981",
+          footerNote: form.footerNote,
         })
       ).toBlob();
       const url = URL.createObjectURL(blob);
@@ -468,6 +476,38 @@ export default function Home() {
                       <div className="grid grid-cols-2 gap-2">
                         <input type="text" name="clientName" value={form.clientName} onChange={handleChange} placeholder="Client name" className={inputClass} />
                         <input type="text" name="clientCompany" value={form.clientCompany} onChange={handleChange} placeholder="Client company" className={inputClass} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mb-2">Branding</p>
+                      <div className="space-y-2">
+                        <input
+                          type="url" name="logoUrl" value={form.logoUrl} onChange={handleChange}
+                          placeholder="Logo URL (e.g. https://yoursite.com/logo.png)"
+                          className={inputClass}
+                        />
+                        <div className="flex gap-2 items-center">
+                          <div className="flex items-center gap-2 flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                            <label className="text-xs text-slate-500 font-medium whitespace-nowrap">Accent colour</label>
+                            <input
+                              type="color" name="accentColor" value={form.accentColor} onChange={handleChange}
+                              className="w-8 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
+                            />
+                            <span className="text-xs font-mono text-slate-400">{form.accentColor}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setForm(p => ({ ...p, accentColor: "#10b981" }))}
+                            className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 border border-slate-200 rounded-lg bg-white"
+                          >
+                            Reset
+                          </button>
+                        </div>
+                        <input
+                          type="text" name="footerNote" value={form.footerNote} onChange={handleChange}
+                          placeholder="Footer note (e.g. ABN 12 345 · Bank: BSB 123-456 · Acc: 12345678)"
+                          className={inputClass}
+                        />
                       </div>
                     </div>
                   </div>
