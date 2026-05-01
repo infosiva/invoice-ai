@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import AdBanner from "./components/AdBanner";
 
 interface FormData {
@@ -18,7 +18,6 @@ interface FormData {
   clientCompany: string;
   invoiceNumber: string;
   dueDate: string;
-  // Branding
   logoUrl: string;
   accentColor: string;
   footerNote: string;
@@ -48,11 +47,9 @@ const HISTORY_KEY = "invoicemint_history";
 const MAX_HISTORY = 5;
 
 function loadHistory(): HistoryEntry[] {
-  try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
+  catch { return []; }
 }
-
 function saveToHistory(entry: HistoryEntry) {
   try {
     const existing = loadHistory();
@@ -63,48 +60,151 @@ function saveToHistory(entry: HistoryEntry) {
 
 type VoiceField = "service" | "details";
 
+async function buildPdfBlob(form: FormData, result: string): Promise<Blob> {
+  const [{ pdf }, { default: InvoicePDF }, React] = await Promise.all([
+    import("@react-pdf/renderer"),
+    import("./components/InvoicePDF"),
+    import("react"),
+  ]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (pdf as any)(
+    React.createElement(InvoicePDF, {
+      docType: form.docType,
+      invoiceNumber: form.invoiceNumber,
+      dueDate: form.dueDate
+        ? new Date(form.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+        : "",
+      yourName: form.yourName,
+      yourCompany: form.yourCompany,
+      yourEmail: form.yourEmail,
+      yourPhone: form.yourPhone,
+      clientName: form.clientName,
+      clientCompany: form.clientCompany,
+      service: form.service,
+      amount: form.amount,
+      generatedText: result,
+      issueDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+      logoUrl: form.logoUrl,
+      accentColor: form.accentColor || "#10b981",
+      footerNote: form.footerNote,
+    })
+  ).toBlob();
+}
+
 export default function Home() {
   const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [showOptional, setShowOptional] = useState(false);
   const [voiceField, setVoiceField] = useState<VoiceField | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(false);
+
+  // PDF state
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfDownloaded, setPdfDownloaded] = useState(false);
+  const prevPdfUrl = useRef<string | null>(null);
+
+  // History
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+
+  // Smart Fill
   const [showSmartFill, setShowSmartFill] = useState(false);
   const [smartUrls, setSmartUrls] = useState(["", "", ""]);
   const [smartFillLoading, setSmartFillLoading] = useState(false);
   const [smartFillMsg, setSmartFillMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  // Voice dictate
   const [dictating, setDictating] = useState(false);
   const [dictateTranscript, setDictateTranscript] = useState("");
-  const [dictateLoading, setDictateLoading] = useState(false);
+  const [dictateStatus, setDictateStatus] = useState<"idle" | "parsing" | "generating">("idle");
   const recognitionRef = useRef<any>(null);
   const dictateRef = useRef<any>(null);
+
+  // Revoke old blob URLs to avoid memory leaks
+  const setPdfUrlSafe = useCallback((url: string | null) => {
+    if (prevPdfUrl.current) URL.revokeObjectURL(prevPdfUrl.current);
+    prevPdfUrl.current = url;
+    setPdfUrl(url);
+  }, []);
 
   useEffect(() => {
     setVoiceSupported(
       !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
     );
     setHistory(loadHistory());
+    return () => { if (prevPdfUrl.current) URL.revokeObjectURL(prevPdfUrl.current); };
   }, []);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
+  ) => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
 
   const handleReset = () => {
     setForm(EMPTY_FORM);
     setResult("");
     setError("");
+    setPdfUrlSafe(null);
     setPdfDownloaded(false);
     setShowOptional(false);
+    setDictateTranscript("");
+    setDictateStatus("idle");
   };
 
+  // ── Core generate + auto PDF ──────────────────────────────────────────────
+  const generateInvoice = useCallback(async (latestForm: FormData) => {
+    setLoading(true);
+    setError("");
+    setResult("");
+    setPdfUrlSafe(null);
+    setPdfDownloaded(false);
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(latestForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to generate");
+      setResult(data.result);
+      const entry: HistoryEntry = {
+        id: Date.now().toString(),
+        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        service: latestForm.service,
+        amount: latestForm.amount,
+        docType: latestForm.docType,
+        clientName: latestForm.clientName || latestForm.clientCompany || "",
+        form: latestForm,
+        result: data.result,
+      };
+      saveToHistory(entry);
+      setHistory(loadHistory());
+
+      // Auto-render PDF preview immediately
+      setPdfLoading(true);
+      try {
+        const blob = await buildPdfBlob(latestForm, data.result);
+        setPdfUrlSafe(URL.createObjectURL(blob));
+      } catch { /* PDF preview failed gracefully */ }
+      setPdfLoading(false);
+
+      // Reset job-specific fields; keep contact details
+      setForm(p => ({ ...p, service: "", amount: "", invoiceNumber: "", dueDate: "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }, [setPdfUrlSafe]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await generateInvoice(form);
+  };
+
+  // ── Smart Fill ────────────────────────────────────────────────────────────
   const handleSmartFill = async () => {
     const urls = smartUrls.filter(u => u.trim());
     if (!urls.length) return;
@@ -119,17 +219,20 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || "Failed");
       const { extracted } = data;
-      setForm(p => ({
-        ...p,
-        yourName: extracted.name || p.yourName,
-        yourCompany: extracted.company || p.yourCompany,
-        yourEmail: extracted.email || p.yourEmail,
-        yourPhone: extracted.phone || p.yourPhone,
-        footerNote: extracted.footerNote || p.footerNote,
-      }));
+      setForm(p => {
+        const updated = {
+          ...p,
+          yourName: extracted.name || p.yourName,
+          yourCompany: extracted.company || p.yourCompany,
+          yourEmail: extracted.email || p.yourEmail,
+          yourPhone: extracted.phone || p.yourPhone,
+          footerNote: extracted.footerNote || p.footerNote,
+        };
+        return updated;
+      });
       setShowSmartFill(false);
-      setShowOptional(true); // open the details section so user sees what was filled
-      setSmartFillMsg({ type: "ok", text: "✓ Fields filled from your links" });
+      setShowOptional(true);
+      setSmartFillMsg({ type: "ok", text: "✓ Contact details filled from your links" });
       setTimeout(() => setSmartFillMsg(null), 3000);
     } catch (err) {
       setSmartFillMsg({ type: "err", text: err instanceof Error ? err.message : "Could not read links" });
@@ -138,31 +241,38 @@ export default function Home() {
     }
   };
 
+  // ── Voice dictate ─────────────────────────────────────────────────────────
   const startDictate = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return;
     if (dictating) { dictateRef.current?.stop(); return; }
     dictateRef.current?.stop();
     setDictateTranscript("");
+    setDictateStatus("idle");
     const r = new SR();
     r.continuous = true; r.interimResults = true; r.lang = "en-US";
     r.onstart = () => setDictating(true);
-    r.onend = () => setDictating(false);
+    r.onend = () => {
+      setDictating(false);
+      // auto-parse when mic stops
+      setDictateTranscript(prev => {
+        if (prev.trim()) parseDictationAndGenerate(prev);
+        return prev;
+      });
+    };
     r.onerror = () => setDictating(false);
     r.onresult = (e: any) => {
-      let transcript = "";
-      for (let i = 0; i < e.results.length; i++) {
-        transcript += e.results[i][0].transcript;
-      }
-      setDictateTranscript(transcript);
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      setDictateTranscript(t);
     };
     r.start();
     dictateRef.current = r;
   };
 
-  const parseDictation = async (text: string) => {
+  const parseDictationAndGenerate = async (text: string) => {
     if (!text.trim()) return;
-    setDictateLoading(true);
+    setDictateStatus("parsing");
     try {
       const res = await fetch("/api/parse-speech", {
         method: "POST",
@@ -172,72 +282,33 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error);
       const f = data.fields;
-      setForm(p => ({
-        ...p,
-        service: f.service || p.service,
-        clientType: f.clientType || p.clientType,
-        amount: f.amount || p.amount,
-        tone: f.tone || p.tone,
-        docType: f.docType || p.docType,
-        clientName: f.clientName || p.clientName,
-        clientCompany: f.clientCompany || p.clientCompany,
-        dueDate: f.dueDate || p.dueDate,
-        details: f.details || p.details,
-      }));
+      const updatedForm = (prev: FormData): FormData => ({
+        ...prev,
+        service: f.service || prev.service,
+        clientType: f.clientType || prev.clientType,
+        amount: f.amount || prev.amount,
+        tone: f.tone || prev.tone,
+        docType: f.docType || prev.docType,
+        clientName: f.clientName || prev.clientName,
+        clientCompany: f.clientCompany || prev.clientCompany,
+        dueDate: f.dueDate || prev.dueDate,
+        details: f.details || prev.details,
+      });
+      setForm(prev => {
+        const next = updatedForm(prev);
+        // Kick off generation with the latest merged form
+        setDictateStatus("generating");
+        setTimeout(() => generateInvoice(next), 0);
+        return next;
+      });
       setDictateTranscript("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not parse speech");
-    } finally {
-      setDictateLoading(false);
+      setDictateStatus("idle");
     }
   };
 
-  const createInvoiceOrQuote = async () => {
-    setLoading(true);
-    setError("");
-    setResult("");
-    setPdfDownloaded(false);
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to generate");
-      setResult(data.result);
-      const entry: HistoryEntry = {
-        id: Date.now().toString(),
-        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        service: form.service,
-        amount: form.amount,
-        docType: form.docType,
-        clientName: form.clientName || form.clientCompany || "",
-        form,
-        result: data.result,
-      };
-      saveToHistory(entry);
-      setHistory(loadHistory());
-      // Reset job-specific fields; keep company/contact details for next invoice
-      setForm(p => ({ ...p, service: "", amount: "", invoiceNumber: "", dueDate: "", notes: "" }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await createInvoiceOrQuote();
-  };
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(result);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
+  // ── Per-field voice ────────────────────────────────────────────────────────
   const startVoice = (field: VoiceField) => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return;
@@ -249,52 +320,33 @@ export default function Home() {
     r.onend = () => setVoiceField(null);
     r.onerror = () => setVoiceField(null);
     r.onresult = (e: any) => {
-      const transcript: string = e.results[0][0].transcript;
-      setForm((prev) => ({
-        ...prev,
-        [field]: prev[field] ? `${prev[field]} ${transcript}` : transcript,
-      }));
+      const t: string = e.results[0][0].transcript;
+      setForm(prev => ({ ...prev, [field]: prev[field] ? `${prev[field]} ${t}` : t }));
     };
     r.start();
     recognitionRef.current = r;
   };
 
+  // ── Download PDF ──────────────────────────────────────────────────────────
   const handleDownloadPDF = async () => {
-    if (!result || pdfLoading) return;
+    if (pdfLoading) return;
+    // If we already have the blob URL (from preview), just trigger download from it
+    if (pdfUrl) {
+      const link = document.createElement("a");
+      link.href = pdfUrl;
+      link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
+      document.body.appendChild(link); link.click();
+      document.body.removeChild(link);
+      setPdfDownloaded(true);
+      return;
+    }
+    // Fallback: build on demand
     setPdfLoading(true);
     try {
-      const [{ pdf }, { default: InvoicePDF }, React] = await Promise.all([
-        import("@react-pdf/renderer"),
-        import("./components/InvoicePDF"),
-        import("react"),
-      ]);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const blob = await (pdf as any)(
-        React.createElement(InvoicePDF, {
-          docType: form.docType,
-          invoiceNumber: form.invoiceNumber,
-          dueDate: form.dueDate
-            ? new Date(form.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-            : "",
-          yourName: form.yourName,
-          yourCompany: form.yourCompany,
-          yourEmail: form.yourEmail,
-          yourPhone: form.yourPhone,
-          clientName: form.clientName,
-          clientCompany: form.clientCompany,
-          service: form.service,
-          amount: form.amount,
-          generatedText: result,
-          issueDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
-          logoUrl: form.logoUrl,
-          accentColor: form.accentColor || "#10b981",
-          footerNote: form.footerNote,
-        })
-      ).toBlob();
+      const blob = await buildPdfBlob(form, result);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url;
-      link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
+      link.href = url; link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
       document.body.appendChild(link); link.click();
       document.body.removeChild(link); URL.revokeObjectURL(url);
       setPdfDownloaded(true);
@@ -351,6 +403,19 @@ export default function Home() {
 
   const sections = result ? parseResult(result) : null;
 
+  // Dictate status helper
+  const dictateIsBusy = dictateStatus !== "idle" || dictating;
+  const dictateStatusLabel =
+    dictating ? "Listening… speak your invoice" :
+    dictateStatus === "parsing" ? "AI is reading your words…" :
+    dictateStatus === "generating" ? "Generating your invoice…" :
+    "🎤 Dictate entire invoice";
+  const dictateStatusColor = dictating
+    ? "border-red-300 bg-red-50"
+    : dictateStatus !== "idle"
+    ? "border-amber-300 bg-amber-50"
+    : "border-emerald-200 bg-emerald-50/60";
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
 
@@ -389,7 +454,7 @@ export default function Home() {
                 Recent
               </button>
             )}
-            {result && (
+            {(result || pdfUrl) && (
               <button
                 onClick={handleReset}
                 className="flex items-center gap-1 text-xs text-white font-semibold bg-emerald-500 hover:bg-emerald-600 px-2.5 py-1 rounded-full transition-colors"
@@ -417,19 +482,16 @@ export default function Home() {
               Speak. Generate. Download.
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              AI writes your invoice — you download the PDF. No signup.
+              Say your invoice — AI writes and renders the PDF instantly. No signup.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {[
-              { icon: "🎤", label: "Voice input" },
+              { icon: "🎤", label: "Voice to invoice" },
               { icon: "🤖", label: "AI generated" },
-              { icon: "📄", label: "PDF export" },
-            ].map((b) => (
-              <span
-                key={b.label}
-                className="flex items-center gap-1 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-xs text-slate-600 font-medium shadow-sm"
-              >
+              { icon: "📄", label: "Instant PDF" },
+            ].map(b => (
+              <span key={b.label} className="flex items-center gap-1 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-xs text-slate-600 font-medium shadow-sm">
                 {b.icon} {b.label}
               </span>
             ))}
@@ -444,11 +506,11 @@ export default function Home() {
 
             {/* Doc type toggle */}
             <div className="bg-white border border-slate-100 rounded-xl p-1 shadow-sm flex gap-1">
-              {(["invoice", "quote"] as const).map((type) => (
+              {(["invoice", "quote"] as const).map(type => (
                 <button
                   key={type}
                   type="button"
-                  onClick={() => setForm((p) => ({ ...p, docType: type }))}
+                  onClick={() => setForm(p => ({ ...p, docType: type }))}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 ${
                     form.docType === type
                       ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
@@ -473,55 +535,59 @@ export default function Home() {
             <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
               <form onSubmit={handleSubmit} className="space-y-3">
 
-                {/* Dictate entire invoice — voice shortcut */}
+                {/* ── Dictate entire invoice ── */}
                 {voiceSupported && (
-                  <div className={`rounded-xl border transition-all ${dictating ? "border-red-300 bg-red-50" : "border-emerald-200 bg-emerald-50/60"} p-3`}>
+                  <div className={`rounded-xl border transition-all duration-300 ${dictateStatusColor} p-3`}>
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        onClick={startDictate}
-                        className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-sm ${dictating ? "bg-red-500 text-white shadow-red-200" : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-200"}`}
+                        onClick={dictateIsBusy && !dictating ? undefined : startDictate}
+                        disabled={dictateStatus === "parsing" || dictateStatus === "generating"}
+                        className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm font-bold text-lg ${
+                          dictating
+                            ? "bg-red-500 text-white shadow-red-200"
+                            : dictateStatus !== "idle"
+                            ? "bg-amber-400 text-white shadow-amber-200 cursor-wait"
+                            : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-200"
+                        }`}
                       >
                         {dictating ? (
                           <span className="relative flex items-center justify-center">
-                            <span className="absolute w-5 h-5 bg-red-300 rounded-full animate-ping opacity-75" />
-                            <svg className="w-4 h-4 relative" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <span className="absolute w-6 h-6 bg-red-300 rounded-full animate-ping opacity-75" />
+                            <svg className="w-5 h-5 relative" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                             </svg>
                           </span>
+                        ) : dictateStatus !== "idle" ? (
+                          <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
                         ) : (
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                           </svg>
                         )}
                       </button>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-semibold ${dictating ? "text-red-700" : "text-emerald-700"}`}>
-                          {dictating ? "Listening… speak your invoice" : "🎤 Dictate entire invoice"}
+                        <p className={`text-xs font-bold ${dictating ? "text-red-700" : dictateStatus !== "idle" ? "text-amber-700" : "text-emerald-700"}`}>
+                          {dictateStatusLabel}
                         </p>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          {dictateTranscript || (dictating ? "Say: "Invoice for logo design, $800, due in 30 days"" : "Tap mic — say it all at once, AI fills the form")}
+                        <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                          {dictateTranscript
+                            ? <span className="italic">&ldquo;{dictateTranscript.slice(0, 120)}{dictateTranscript.length > 120 ? "…" : ""}&rdquo;</span>
+                            : dictating
+                            ? <span className="text-slate-400">e.g. &ldquo;Invoice for logo design, $800 for Acme Corp, due in 30 days&rdquo;</span>
+                            : <span className="text-slate-400">Tap mic → speak → PDF appears automatically</span>
+                          }
                         </p>
                       </div>
-                      {dictateTranscript && !dictating && (
-                        <button
-                          type="button"
-                          onClick={() => parseDictation(dictateTranscript)}
-                          disabled={dictateLoading}
-                          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {dictateLoading ? (
-                            <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                          ) : "Fill form →"}
-                        </button>
-                      )}
-                      {dictateTranscript && !dictating && (
-                        <button type="button" onClick={() => setDictateTranscript("")} className="text-slate-300 hover:text-slate-500 text-lg flex-shrink-0">✕</button>
-                      )}
                     </div>
+                    {dictateStatus === "idle" && !dictating && (
+                      <p className="text-[10px] text-emerald-600/70 mt-2 text-center font-medium tracking-wide">
+                        SAY IT ALL AT ONCE · AI FILLS EVERY FIELD · PDF PREVIEWS INSTANTLY
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -539,7 +605,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Client Type + Amount + Tone — 3 columns */}
+                {/* Client Type + Amount + Tone */}
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className={labelClass}>Client Type <span className="text-red-400">*</span></label>
@@ -570,7 +636,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Invoice # + Due Date — 2 columns */}
+                {/* Invoice # + Due Date */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className={labelClass}>
@@ -608,7 +674,6 @@ export default function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-
                   {showSmartFill && (
                     <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
                       <p className="text-[11px] text-emerald-700 font-medium">
@@ -642,7 +707,6 @@ export default function Home() {
                       </button>
                     </div>
                   )}
-
                   {smartFillMsg && (
                     <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-medium ${smartFillMsg.type === "ok" ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
                       {smartFillMsg.text}
@@ -650,10 +714,10 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Optional expand */}
+                {/* Optional: Company & Contact */}
                 <button
                   type="button"
-                  onClick={() => setShowOptional((v) => !v)}
+                  onClick={() => setShowOptional(v => !v)}
                   className="w-full flex items-center justify-between py-2 px-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 border-dashed rounded-lg text-xs text-slate-600 font-medium transition-colors"
                 >
                   <span className="flex items-center gap-1.5">
@@ -723,9 +787,7 @@ export default function Home() {
 
                 {/* Notes */}
                 <div>
-                  <label className={labelClass}>
-                    Notes <span className="text-slate-400 normal-case font-normal">(opt.)</span>
-                  </label>
+                  <label className={labelClass}>Notes <span className="text-slate-400 normal-case font-normal">(opt.)</span></label>
                   <div className="relative">
                     <textarea
                       name="details" value={form.details} onChange={handleChange}
@@ -740,7 +802,7 @@ export default function Home() {
                 {/* Submit */}
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || dictateIsBusy}
                   className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-md shadow-emerald-100 flex items-center justify-center gap-2 text-sm"
                 >
                   {loading ? (
@@ -778,142 +840,89 @@ export default function Home() {
             )}
           </div>
 
-          {/* ── Right: Result / Placeholder ── */}
+          {/* ── Right: PDF Preview / Loading / Placeholder ── */}
           <div className="sticky top-16">
-            {result && sections ? (
-              /* Document Preview */
+
+            {/* PDF iframe preview */}
+            {pdfUrl && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                {/* Doc header */}
-                <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-5 py-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h2 className="text-white text-xl font-black uppercase tracking-wider">
-                        {isQuote ? "Quote" : "Invoice"}
-                      </h2>
-                      {form.invoiceNumber && <p className="text-emerald-200 text-xs mt-0.5">#{form.invoiceNumber}</p>}
-                    </div>
-                    <div className="text-right text-xs text-emerald-100 space-y-0.5">
-                      <p>{new Date().toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}</p>
-                      {form.dueDate && (
-                        <p className="text-emerald-200">
-                          {isQuote ? "Valid until" : "Due"}:{" "}
-                          {new Date(form.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
-                        </p>
-                      )}
-                    </div>
+                <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-white font-bold text-sm">
+                      {isQuote ? "Quote" : "Invoice"} Preview
+                    </span>
                   </div>
+                  <span className="text-emerald-200 text-xs">Ready to download</span>
                 </div>
-
-                {/* From / To */}
-                {(form.yourName || form.yourCompany || form.yourEmail || form.yourPhone || form.clientName || form.clientCompany) && (
-                  <div className="grid grid-cols-2 gap-4 px-5 py-3 bg-slate-50 border-b border-slate-100">
-                    {(form.yourName || form.yourCompany || form.yourEmail || form.yourPhone) && (
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">From</p>
-                        {form.yourName && <p className="text-xs font-semibold text-slate-800">{form.yourName}</p>}
-                        {form.yourCompany && <p className="text-xs text-slate-500">{form.yourCompany}</p>}
-                        {form.yourEmail && <p className="text-xs text-slate-500">{form.yourEmail}</p>}
-                        {form.yourPhone && <p className="text-xs text-slate-500">{form.yourPhone}</p>}
-                      </div>
-                    )}
-                    {(form.clientName || form.clientCompany) && (
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Bill To</p>
-                        {form.clientName && <p className="text-xs font-semibold text-slate-800">{form.clientName}</p>}
-                        {form.clientCompany && <p className="text-xs text-slate-500">{form.clientCompany}</p>}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Amount */}
-                <div className="mx-5 mt-4 bg-emerald-50 border border-emerald-100 rounded-lg px-4 py-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wide mb-0.5">Service</p>
-                    <p className="text-xs font-semibold text-slate-800">{form.service}</p>
-                  </div>
-                  <p className="text-lg font-black text-emerald-600">{form.amount}</p>
-                </div>
-
-                {/* AI Sections */}
-                <div className="px-5 pb-1 space-y-1">
-                  {sections.lineItem && (
-                    <div className="pt-3">
-                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">
-                        {isQuote ? "Quote Description" : "Service Description"}
-                      </p>
-                      <p className="text-xs text-slate-600 leading-relaxed">{sections.lineItem}</p>
-                    </div>
-                  )}
-                  {sections.paymentTerms && (
-                    <>
-                      <div className="h-px bg-slate-100 my-2" />
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Payment Terms</p>
-                        <p className="text-xs text-slate-600 leading-relaxed">{sections.paymentTerms}</p>
-                      </div>
-                    </>
-                  )}
-                  {sections.closing && (
-                    <>
-                      <div className="h-px bg-slate-100 my-2" />
-                      <div className="pb-3">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{sections.closingLabel}</p>
-                        <p className="text-xs text-slate-600 leading-relaxed">{sections.closing}</p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Footer note */}
-                {form.footerNote && (
-                  <div className="mx-5 mb-3 pt-3 border-t border-slate-100">
-                    <p className="text-[10px] text-slate-400">{form.footerNote}</p>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50">
+                <iframe
+                  src={pdfUrl}
+                  className="w-full border-0"
+                  style={{ height: "520px" }}
+                  title="Invoice PDF Preview"
+                />
+                <div className="flex gap-2 px-4 py-3 border-t border-slate-100 bg-slate-50">
                   <button
                     onClick={handleDownloadPDF}
                     disabled={pdfLoading}
                     className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-lg transition-all duration-200 text-xs shadow-sm"
                   >
-                    {pdfLoading ? (
-                      <>
-                        <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Building PDF…
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Download PDF
-                      </>
-                    )}
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    {pdfDownloaded ? "Download Again" : "Download PDF"}
                   </button>
                   <button
-                    onClick={handleCopy}
-                    className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg border font-semibold text-xs transition-all duration-200 ${
-                      copied ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                    }`}
+                    onClick={handleReset}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
                   >
-                    {copied ? (
-                      <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>Copied</>
-                    ) : (
-                      <><svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>Copy</>
-                    )}
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    New
                   </button>
                 </div>
               </div>
-            ) : (
-              /* Placeholder panel */
+            )}
+
+            {/* Loading state — shown while generating or rendering PDF */}
+            {!pdfUrl && (loading || pdfLoading || dictateStatus !== "idle") && (
+              <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                <div className="bg-gradient-to-r from-emerald-600/30 to-teal-600/30 px-5 py-4">
+                  <div className="h-6 w-32 bg-emerald-200/60 rounded animate-pulse" />
+                </div>
+                <div className="px-5 py-8 flex flex-col items-center gap-5">
+                  <div className="relative w-16 h-16">
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-100" />
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <svg className="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-slate-700">
+                      {pdfLoading ? "Rendering PDF…" : dictateStatus === "parsing" ? "Reading your words…" : dictateStatus === "generating" ? "Writing your invoice…" : "Generating invoice…"}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {pdfLoading ? "Building your professional PDF" : "AI is crafting your document"}
+                    </p>
+                  </div>
+                  <div className="w-full space-y-2">
+                    {[100, 85, 70, 55].map((w, i) => (
+                      <div key={i} className={`h-2 bg-slate-100 rounded animate-pulse`} style={{ width: `${w}%`, animationDelay: `${i * 150}ms` }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Placeholder — nothing happening yet */}
+            {!pdfUrl && !loading && !pdfLoading && dictateStatus === "idle" && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 border-dashed overflow-hidden">
-                {/* Fake doc header */}
                 <div className="bg-gradient-to-r from-emerald-600/20 to-teal-600/20 px-5 py-5 flex items-start justify-between">
                   <div>
                     <div className="h-2.5 w-20 bg-emerald-200/60 rounded mb-2" />
@@ -926,26 +935,34 @@ export default function Home() {
                 </div>
 
                 <div className="px-5 py-6 flex flex-col items-center justify-center text-center gap-4">
-                  <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center">
-                    <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center">
+                    <svg className="w-7 h-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-slate-700">Your document appears here</p>
-                    <p className="text-xs text-slate-400 mt-1 max-w-[200px] leading-relaxed">
-                      Fill in the form and click Generate — your AI-written invoice preview shows up instantly.
+                    <p className="text-sm font-semibold text-slate-700">PDF preview appears here</p>
+                    <p className="text-xs text-slate-400 mt-1 max-w-[220px] leading-relaxed">
+                      Tap the mic and speak — or fill the form and click Generate. Your PDF renders instantly.
                     </p>
                   </div>
 
-                  {/* Mini steps */}
+                  {voiceSupported && (
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 w-full">
+                      <p className="text-xs font-bold text-emerald-700 mb-1">Try saying:</p>
+                      <p className="text-xs text-emerald-600 italic leading-relaxed">
+                        &ldquo;Invoice for logo design, $800 for Acme Corp, due in 30 days&rdquo;
+                      </p>
+                    </div>
+                  )}
+
                   <div className="w-full space-y-2 mt-1">
                     {[
-                      { n: "1", t: "Describe your service" },
+                      { n: "1", t: voiceSupported ? "Tap mic and say your invoice" : "Describe your service" },
                       { n: "2", t: "Set amount & tone" },
-                      { n: "3", t: "Hit Generate" },
-                      { n: "4", t: "Download PDF" },
-                    ].map((s) => (
+                      { n: "3", t: "Hit Generate (or it auto-generates)" },
+                      { n: "4", t: "PDF previews — one click to download" },
+                    ].map(s => (
                       <div key={s.n} className="flex items-center gap-2.5 text-left">
                         <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center shrink-0">
                           {s.n}
@@ -955,8 +972,7 @@ export default function Home() {
                     ))}
                   </div>
 
-                  {/* Fake lines */}
-                  <div className="w-full space-y-1.5 mt-2 opacity-30">
+                  <div className="w-full space-y-1.5 mt-2 opacity-25">
                     <div className="h-2 bg-slate-200 rounded w-full" />
                     <div className="h-2 bg-slate-200 rounded w-5/6" />
                     <div className="h-2 bg-slate-200 rounded w-4/6" />
@@ -984,15 +1000,21 @@ export default function Home() {
               </button>
             </div>
             <div className="space-y-2">
-              {history.map((entry) => (
+              {history.map(entry => (
                 <div
                   key={entry.id}
-                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-emerald-200 cursor-pointer transition-colors group"
+                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-emerald-200 cursor-pointer transition-colors"
                   onClick={() => {
                     setForm(entry.form);
                     setResult(entry.result);
                     setPdfDownloaded(false);
                     setShowHistory(false);
+                    // Re-render PDF for this history entry
+                    setPdfLoading(true);
+                    buildPdfBlob(entry.form, entry.result)
+                      .then(blob => setPdfUrlSafe(URL.createObjectURL(blob)))
+                      .catch(() => {})
+                      .finally(() => setPdfLoading(false));
                   }}
                 >
                   <div className="flex items-center gap-3">
@@ -1016,54 +1038,20 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Generate Another CTA (shown after PDF download) ── */}
-      {pdfDownloaded && (
-        <div className="max-w-6xl mx-auto w-full px-4 mt-4">
-          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-bold text-emerald-800">PDF downloaded!</p>
-              <p className="text-xs text-emerald-700 mt-0.5">Need another invoice or quote? Start fresh in seconds.</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs px-4 py-2 rounded-lg transition-colors shadow-sm"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                New {isQuote ? "Quote" : "Invoice"}
-              </button>
-              <button
-                onClick={createInvoiceOrQuote}
-                className="flex items-center gap-1.5 bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-700 font-semibold text-xs px-4 py-2 rounded-lg transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Regenerate
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Below fold: SEO content ── */}
       <div className="max-w-6xl mx-auto w-full px-4 pb-12 space-y-8 mt-6">
 
-        {/* Ad */}
         <AdBanner slot="1122334455" format="horizontal" className="min-h-[90px] bg-slate-100 rounded-xl" />
 
-        {/* How it works */}
         <section>
           <h2 className="text-base font-bold text-slate-800 mb-3">How InvoiceMint Works</h2>
           <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { step: "01", icon: "🗂️", title: "Choose type", desc: "Invoice (post-work) or quote (estimate)." },
-              { step: "02", icon: "🎤", title: "Speak or type", desc: "Use the mic or type your service description." },
-              { step: "03", icon: "🤖", title: "AI generates", desc: "Line items, payment terms, closing — all written for you." },
-              { step: "04", icon: "📄", title: "Download PDF", desc: "One click for a professional PDF ready to send." },
-            ].map((item) => (
+              { step: "01", icon: "🎤", title: "Speak or type", desc: "Tap the mic and say your invoice — AI hears everything at once." },
+              { step: "02", icon: "🤖", title: "AI parses & writes", desc: "Fields fill automatically. Line items, payment terms, closing — all written for you." },
+              { step: "03", icon: "👁️", title: "PDF previews live", desc: "Your professional PDF renders in the panel — no extra steps." },
+              { step: "04", icon: "📄", title: "One-click download", desc: "Hit Download and send it to your client." },
+            ].map(item => (
               <div key={item.step} className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-lg">{item.icon}</span>
@@ -1076,16 +1064,15 @@ export default function Home() {
           </div>
         </section>
 
-        {/* FAQ */}
         <section>
           <h2 className="text-base font-bold text-slate-800 mb-3">Frequently Asked Questions</h2>
           <div className="grid sm:grid-cols-2 gap-3">
             {[
               { q: "Is InvoiceMint completely free?", a: "Yes, 100% free. No account, no credit card, no limits." },
-              { q: "How does voice input work?", a: "Click the mic icon and speak — your browser transcribes it. Works in Chrome, Edge, and Safari." },
-              { q: "Can I download as PDF?", a: "Yes! Click 'Download PDF' for a professionally formatted PDF with all your details ready to send." },
+              { q: "How does voice input work?", a: "Tap the mic, say your full invoice in natural speech — AI extracts service, amount, client, due date and fills every field." },
+              { q: "Do I get a PDF preview?", a: "Yes! As soon as generation finishes, the PDF renders live in the right panel. One click to download." },
               { q: "Invoice vs quote — what's the difference?", a: "A quote is sent before work starts. An invoice is sent after work is complete, requesting payment." },
-              { q: "Can I add my company details?", a: "Yes — expand 'Company & Contact Details' to add your name, company, email, and client info." },
+              { q: "Can I add my company details?", a: "Yes — expand 'Company & Contact Details', or use Smart Fill to paste your LinkedIn/website URL and AI fills them for you." },
               { q: "How does the AI generate text?", a: "InvoiceMint uses advanced language models tuned to your service, amount, client type, and tone." },
             ].map((faq, i) => (
               <div key={i} className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
@@ -1108,7 +1095,7 @@ export default function Home() {
             </div>
             <span className="font-extrabold text-slate-700 text-sm">Invoice<span className="text-emerald-500">Mint</span></span>
           </div>
-          <p className="text-slate-400 text-xs">Free AI Invoice &amp; Quote Generator — Voice Input &amp; PDF Export</p>
+          <p className="text-slate-400 text-xs">Free AI Invoice &amp; Quote Generator — Voice Input &amp; Instant PDF Preview</p>
           <p className="text-slate-400 text-xs mt-1">© {new Date().getFullYear()} InvoiceMint — No sign up required</p>
         </div>
       </footer>
