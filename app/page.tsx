@@ -80,7 +80,11 @@ export default function Home() {
   const [smartUrls, setSmartUrls] = useState(["", "", ""]);
   const [smartFillLoading, setSmartFillLoading] = useState(false);
   const [smartFillMsg, setSmartFillMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [dictating, setDictating] = useState(false);
+  const [dictateTranscript, setDictateTranscript] = useState("");
+  const [dictateLoading, setDictateLoading] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const dictateRef = useRef<any>(null);
 
   useEffect(() => {
     setVoiceSupported(
@@ -131,6 +135,60 @@ export default function Home() {
       setSmartFillMsg({ type: "err", text: err instanceof Error ? err.message : "Could not read links" });
     } finally {
       setSmartFillLoading(false);
+    }
+  };
+
+  const startDictate = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    if (dictating) { dictateRef.current?.stop(); return; }
+    dictateRef.current?.stop();
+    setDictateTranscript("");
+    const r = new SR();
+    r.continuous = true; r.interimResults = true; r.lang = "en-US";
+    r.onstart = () => setDictating(true);
+    r.onend = () => setDictating(false);
+    r.onerror = () => setDictating(false);
+    r.onresult = (e: any) => {
+      let transcript = "";
+      for (let i = 0; i < e.results.length; i++) {
+        transcript += e.results[i][0].transcript;
+      }
+      setDictateTranscript(transcript);
+    };
+    r.start();
+    dictateRef.current = r;
+  };
+
+  const parseDictation = async (text: string) => {
+    if (!text.trim()) return;
+    setDictateLoading(true);
+    try {
+      const res = await fetch("/api/parse-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ speech: text }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error);
+      const f = data.fields;
+      setForm(p => ({
+        ...p,
+        service: f.service || p.service,
+        clientType: f.clientType || p.clientType,
+        amount: f.amount || p.amount,
+        tone: f.tone || p.tone,
+        docType: f.docType || p.docType,
+        clientName: f.clientName || p.clientName,
+        clientCompany: f.clientCompany || p.clientCompany,
+        dueDate: f.dueDate || p.dueDate,
+        details: f.details || p.details,
+      }));
+      setDictateTranscript("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not parse speech");
+    } finally {
+      setDictateLoading(false);
     }
   };
 
@@ -414,6 +472,58 @@ export default function Home() {
             {/* Form card */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
               <form onSubmit={handleSubmit} className="space-y-3">
+
+                {/* Dictate entire invoice — voice shortcut */}
+                {voiceSupported && (
+                  <div className={`rounded-xl border transition-all ${dictating ? "border-red-300 bg-red-50" : "border-emerald-200 bg-emerald-50/60"} p-3`}>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={startDictate}
+                        className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-sm ${dictating ? "bg-red-500 text-white shadow-red-200" : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-200"}`}
+                      >
+                        {dictating ? (
+                          <span className="relative flex items-center justify-center">
+                            <span className="absolute w-5 h-5 bg-red-300 rounded-full animate-ping opacity-75" />
+                            <svg className="w-4 h-4 relative" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                            </svg>
+                          </span>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                          </svg>
+                        )}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-semibold ${dictating ? "text-red-700" : "text-emerald-700"}`}>
+                          {dictating ? "Listening… speak your invoice" : "🎤 Dictate entire invoice"}
+                        </p>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {dictateTranscript || (dictating ? "Say: "Invoice for logo design, $800, due in 30 days"" : "Tap mic — say it all at once, AI fills the form")}
+                        </p>
+                      </div>
+                      {dictateTranscript && !dictating && (
+                        <button
+                          type="button"
+                          onClick={() => parseDictation(dictateTranscript)}
+                          disabled={dictateLoading}
+                          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {dictateLoading ? (
+                            <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          ) : "Fill form →"}
+                        </button>
+                      )}
+                      {dictateTranscript && !dictating && (
+                        <button type="button" onClick={() => setDictateTranscript("")} className="text-slate-300 hover:text-slate-500 text-lg flex-shrink-0">✕</button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Service */}
                 <div>
