@@ -76,6 +76,10 @@ export default function Home() {
   const [pdfDownloaded, setPdfDownloaded] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSmartFill, setShowSmartFill] = useState(false);
+  const [smartUrls, setSmartUrls] = useState(["", "", ""]);
+  const [smartFillLoading, setSmartFillLoading] = useState(false);
+  const [smartFillMsg, setSmartFillMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -95,6 +99,39 @@ export default function Home() {
     setError("");
     setPdfDownloaded(false);
     setShowOptional(false);
+  };
+
+  const handleSmartFill = async () => {
+    const urls = smartUrls.filter(u => u.trim());
+    if (!urls.length) return;
+    setSmartFillLoading(true);
+    setSmartFillMsg(null);
+    try {
+      const res = await fetch("/api/smart-fill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "Failed");
+      const { extracted } = data;
+      setForm(p => ({
+        ...p,
+        yourName: extracted.name || p.yourName,
+        yourCompany: extracted.company || p.yourCompany,
+        yourEmail: extracted.email || p.yourEmail,
+        yourPhone: extracted.phone || p.yourPhone,
+        footerNote: extracted.footerNote || p.footerNote,
+      }));
+      setShowSmartFill(false);
+      setShowOptional(true); // open the details section so user sees what was filled
+      setSmartFillMsg({ type: "ok", text: "✓ Fields filled from your links" });
+      setTimeout(() => setSmartFillMsg(null), 3000);
+    } catch (err) {
+      setSmartFillMsg({ type: "err", text: err instanceof Error ? err.message : "Could not read links" });
+    } finally {
+      setSmartFillLoading(false);
+    }
   };
 
   const createInvoiceOrQuote = async () => {
@@ -442,6 +479,65 @@ export default function Home() {
                     </label>
                     <input type="date" name="dueDate" value={form.dueDate} onChange={handleChange} className={inputClass} />
                   </div>
+                </div>
+
+                {/* Smart Fill from Links */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSmartFill(v => !v)}
+                    className="w-full flex items-center justify-between py-2 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 border-dashed rounded-lg text-xs text-emerald-700 font-medium transition-colors"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      ✦ Smart Fill — paste your links, AI fills your details
+                    </span>
+                    <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${showSmartFill ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {showSmartFill && (
+                    <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
+                      <p className="text-[11px] text-emerald-700 font-medium">
+                        Paste your LinkedIn, website, or portfolio URL — AI extracts your name, company, email &amp; phone.
+                      </p>
+                      {smartUrls.map((url, i) => (
+                        <input
+                          key={i}
+                          type="url"
+                          value={url}
+                          onChange={e => setSmartUrls(prev => prev.map((u, j) => j === i ? e.target.value : u))}
+                          placeholder={i === 0 ? "https://linkedin.com/in/yourname" : i === 1 ? "https://yourwebsite.com" : "https://portfolio.com (optional)"}
+                          className="w-full bg-white border border-emerald-200 rounded-lg px-3 py-2 text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        onClick={handleSmartFill}
+                        disabled={smartFillLoading || !smartUrls.some(u => u.trim())}
+                        className="w-full flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-xs transition-colors"
+                      >
+                        {smartFillLoading ? (
+                          <>
+                            <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                            Reading your links…
+                          </>
+                        ) : "Auto-fill my details →"}
+                      </button>
+                    </div>
+                  )}
+
+                  {smartFillMsg && (
+                    <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-medium ${smartFillMsg.type === "ok" ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
+                      {smartFillMsg.text}
+                    </div>
+                  )}
                 </div>
 
                 {/* Optional expand */}
