@@ -78,7 +78,7 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {deals.map(deal => (
+          {deals.map((deal: typeof deals[0]) => (
             <Link
               key={deal.id}
               href={`/deal/${deal.id}`}
