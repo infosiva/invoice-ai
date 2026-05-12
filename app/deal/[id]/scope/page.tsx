@@ -18,7 +18,7 @@ export default async function ScopePage({ params }: { params: Promise<{ id: stri
   if (!deal) notFound()
 
   const isVendor = deal.vendorId === user.id
-  const total = deal.scopeItems.reduce((sum, item) => sum + Number(item.unitPrice) * item.qty, 0)
+  const total = deal.scopeItems.reduce((sum: number, item: typeof deal.scopeItems[0]) => sum + Number(item.unitPrice) * item.qty, 0)
 
   return (
     <div className="pb-12">
