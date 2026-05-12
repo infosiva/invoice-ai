@@ -70,6 +70,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <span className="text-lg font-black tracking-tight">Deal<span className="text-violet-400">Flow</span></span>
           <div className="flex items-center gap-3">
+            <Link href="/generate" className="text-slate-400 hover:text-white text-sm transition-colors">Quick Invoice</Link>
             <Link href="/login" className="text-slate-400 hover:text-white text-sm transition-colors">Log in</Link>
             <Link href="/login" className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
               Get started free →

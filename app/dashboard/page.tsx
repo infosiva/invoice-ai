@@ -48,12 +48,20 @@ export default async function DashboardPage() {
           <h1 className="text-2xl font-black text-white">Your Deals</h1>
           <p className="text-slate-400 text-sm mt-1">Manage proposals, milestones, and payments</p>
         </div>
-        <Link
-          href="/deal/new"
-          className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-        >
-          + New deal
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/generate"
+            className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
+          >
+            Quick Invoice ↗
+          </Link>
+          <Link
+            href="/deal/new"
+            className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
+          >
+            + New deal
+          </Link>
+        </div>
       </div>
 
       {/* Stats */}
