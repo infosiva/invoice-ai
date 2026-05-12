@@ -1,0 +1,167 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      UserRole @default(VENDOR)
+  waNumber  String?
+  waOptIn   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  vendorDeals  Deal[]        @relation("VendorDeals")
+  clientDeals  Deal[]        @relation("ClientDeals")
+  messages     Message[]     @relation("MessageAuthor")
+  changeOrders ChangeOrder[] @relation("RequestedBy")
+  authTokens   AuthToken[]
+}
+
+enum UserRole {
+  VENDOR
+  CLIENT
+}
+
+model AuthToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Deal {
+  id          String     @id @default(cuid())
+  vendorId    String
+  clientId    String?
+  title       String
+  brief       String?
+  clientEmail String?
+  totalAmount Decimal?   @db.Decimal(10, 2)
+  status      DealStatus @default(DRAFT)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  vendor       User          @relation("VendorDeals", fields: [vendorId], references: [id])
+  client       User?         @relation("ClientDeals", fields: [clientId], references: [id])
+  scopeItems   ScopeItem[]
+  milestones   Milestone[]
+  messages     Message[]
+  changeOrders ChangeOrder[]
+  invoices     Invoice[]
+  inviteTokens InviteToken[]
+}
+
+enum DealStatus {
+  DRAFT
+  PENDING_CLIENT
+  SCOPE_AGREED
+  IN_PROGRESS
+  INVOICED
+  PAID
+  DISPUTED
+}
+
+model InviteToken {
+  id        String    @id @default(cuid())
+  dealId    String
+  email     String
+  token     String    @unique @default(cuid())
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+model ScopeItem {
+  id          String    @id @default(cuid())
+  dealId      String
+  description String
+  qty         Int       @default(1)
+  unitPrice   Decimal   @db.Decimal(10, 2)
+  order       Int       @default(0)
+  approvedAt  DateTime?
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  dealId      String
+  title       String
+  description String?
+  dueDate     DateTime?
+  status      MilestoneStatus @default(PENDING)
+  proofUrl    String?
+  proofNote   String?
+  completedAt DateTime?
+  approvedAt  DateTime?
+  createdAt   DateTime        @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+enum MilestoneStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model ChangeOrder {
+  id          String    @id @default(cuid())
+  dealId      String
+  description String
+  extraAmount Decimal   @db.Decimal(10, 2)
+  requestedBy String
+  approvedAt  DateTime?
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+
+  deal      Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  requester User @relation("RequestedBy", fields: [requestedBy], references: [id])
+}
+
+model Invoice {
+  id        String        @id @default(cuid())
+  dealId    String
+  number    String
+  amount    Decimal       @db.Decimal(10, 2)
+  status    InvoiceStatus @default(DRAFT)
+  stripeUrl String?
+  dueDate   DateTime?
+  paidAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  VOID
+}
+
+model Message {
+  id            String   @id @default(cuid())
+  dealId        String
+  authorId      String
+  body          String
+  attachmentUrl String?
+  createdAt     DateTime @default(now())
+
+  deal   Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  author User @relation("MessageAuthor", fields: [authorId], references: [id])
+}

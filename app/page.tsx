@@ -1,1104 +1,255 @@
-"use client";
+import Link from 'next/link'
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import AdBanner from "./components/AdBanner";
+const FEATURES = [
+  {
+    icon: '📋',
+    title: 'AI-Drafted Proposals',
+    desc: 'Describe your project in plain text or voice. AI writes the full scope and line items.',
+  },
+  {
+    icon: '✍️',
+    title: 'Scope Agreement',
+    desc: "Both sides sign off on exactly what's included. Scope locks — no more \"I thought it was included.\"",
+  },
+  {
+    icon: '🏁',
+    title: 'Milestone Tracking',
+    desc: 'Vendor uploads proof. Client approves. Invoice unlocks only from approved milestones.',
+  },
+  {
+    icon: '🔄',
+    title: 'Change Orders',
+    desc: 'Extra work gets a formal change order. Both sides approve. Evidence stays forever.',
+  },
+  {
+    icon: '💬',
+    title: 'Deal Comms',
+    desc: 'Every negotiation, revision, and approval in one thread — linked to the deal.',
+  },
+  {
+    icon: '💳',
+    title: 'Online Payments',
+    desc: 'Stripe payment link per invoice. Client pays in browser. No Stripe account needed on their side.',
+  },
+  {
+    icon: '📱',
+    title: 'WhatsApp Alerts',
+    desc: 'Scope approved, milestone done, payment received — straight to WhatsApp. Both sides.',
+  },
+  {
+    icon: '🛡️',
+    title: 'Dispute Evidence',
+    desc: 'If a client disputes, show them: signed scope, approved milestones, full message trail.',
+  },
+]
 
-interface FormData {
-  service: string;
-  clientType: string;
-  amount: string;
-  tone: string;
-  details: string;
-  docType: "invoice" | "quote";
-  yourName: string;
-  yourCompany: string;
-  yourEmail: string;
-  yourPhone: string;
-  clientName: string;
-  clientCompany: string;
-  invoiceNumber: string;
-  dueDate: string;
-  logoUrl: string;
-  accentColor: string;
-  footerNote: string;
-}
+const STEPS = [
+  { n: '01', title: 'Create a deal', desc: 'Add title, brief, and client email. AI drafts the proposal.' },
+  { n: '02', title: 'Client approves scope', desc: 'Client gets a link, reviews line items, signs off.' },
+  { n: '03', title: 'Track milestones', desc: 'Upload proof per milestone. Client approves each one.' },
+  { n: '04', title: 'Invoice & get paid', desc: 'Invoice auto-generates from milestones. Stripe handles payment.' },
+]
 
-interface HistoryEntry {
-  id: string;
-  date: string;
-  service: string;
-  amount: string;
-  docType: "invoice" | "quote";
-  clientName: string;
-  form: FormData;
-  result: string;
-}
+const COMPARE = [
+  { feature: 'Scope agreement (both sign)', xero: false, freshbooks: false, us: true },
+  { feature: 'Milestone proof uploads', xero: false, freshbooks: false, us: true },
+  { feature: 'Change order tracking', xero: false, freshbooks: false, us: true },
+  { feature: 'Per-deal threaded comms', xero: false, freshbooks: 'basic', us: true },
+  { feature: 'WhatsApp notifications', xero: false, freshbooks: false, us: true },
+  { feature: 'Client portal (no login)', xero: false, freshbooks: false, us: true },
+  { feature: 'AI proposal drafting', xero: false, freshbooks: false, us: true },
+  { feature: 'Dispute evidence trail', xero: false, freshbooks: false, us: true },
+]
 
-const EMPTY_FORM: FormData = {
-  service: "", clientType: "", amount: "", tone: "formal",
-  details: "", docType: "invoice",
-  yourName: "", yourCompany: "", yourEmail: "", yourPhone: "",
-  clientName: "", clientCompany: "",
-  invoiceNumber: "", dueDate: "",
-  logoUrl: "", accentColor: "#10b981", footerNote: "",
-};
-
-const HISTORY_KEY = "invoicemint_history";
-const MAX_HISTORY = 5;
-
-function loadHistory(): HistoryEntry[] {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); }
-  catch { return []; }
-}
-function saveToHistory(entry: HistoryEntry) {
-  try {
-    const existing = loadHistory();
-    const updated = [entry, ...existing.filter(e => e.id !== entry.id)].slice(0, MAX_HISTORY);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-  } catch { /* ignore */ }
-}
-
-type VoiceField = "service" | "details";
-
-async function buildPdfBlob(form: FormData, result: string): Promise<Blob> {
-  const [{ pdf }, { default: InvoicePDF }, React] = await Promise.all([
-    import("@react-pdf/renderer"),
-    import("./components/InvoicePDF"),
-    import("react"),
-  ]);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (pdf as any)(
-    React.createElement(InvoicePDF, {
-      docType: form.docType,
-      invoiceNumber: form.invoiceNumber,
-      dueDate: form.dueDate
-        ? new Date(form.dueDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
-        : "",
-      yourName: form.yourName,
-      yourCompany: form.yourCompany,
-      yourEmail: form.yourEmail,
-      yourPhone: form.yourPhone,
-      clientName: form.clientName,
-      clientCompany: form.clientCompany,
-      service: form.service,
-      amount: form.amount,
-      generatedText: result,
-      issueDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
-      logoUrl: form.logoUrl,
-      accentColor: form.accentColor || "#10b981",
-      footerNote: form.footerNote,
-    })
-  ).toBlob();
-}
-
-export default function Home() {
-  const [form, setForm] = useState<FormData>(EMPTY_FORM);
-  const [result, setResult] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [showOptional, setShowOptional] = useState(false);
-  const [voiceField, setVoiceField] = useState<VoiceField | null>(null);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-
-  // PDF state
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
-  const [pdfDownloaded, setPdfDownloaded] = useState(false);
-  const prevPdfUrl = useRef<string | null>(null);
-
-  // History
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-
-  // Smart Fill
-  const [showSmartFill, setShowSmartFill] = useState(false);
-  const [smartUrls, setSmartUrls] = useState(["", "", ""]);
-  const [smartFillLoading, setSmartFillLoading] = useState(false);
-  const [smartFillMsg, setSmartFillMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-
-  // Voice dictate
-  const [dictating, setDictating] = useState(false);
-  const [dictateTranscript, setDictateTranscript] = useState("");
-  const [dictateStatus, setDictateStatus] = useState<"idle" | "parsing" | "generating">("idle");
-  const recognitionRef = useRef<any>(null);
-  const dictateRef = useRef<any>(null);
-
-  // Revoke old blob URLs to avoid memory leaks
-  const setPdfUrlSafe = useCallback((url: string | null) => {
-    if (prevPdfUrl.current) URL.revokeObjectURL(prevPdfUrl.current);
-    prevPdfUrl.current = url;
-    setPdfUrl(url);
-  }, []);
-
-  useEffect(() => {
-    setVoiceSupported(
-      !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-    );
-    setHistory(loadHistory());
-    return () => { if (prevPdfUrl.current) URL.revokeObjectURL(prevPdfUrl.current); };
-  }, []);
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
-  ) => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
-
-  const handleReset = () => {
-    setForm(EMPTY_FORM);
-    setResult("");
-    setError("");
-    setPdfUrlSafe(null);
-    setPdfDownloaded(false);
-    setShowOptional(false);
-    setDictateTranscript("");
-    setDictateStatus("idle");
-  };
-
-  // ── Core generate + auto PDF ──────────────────────────────────────────────
-  const generateInvoice = useCallback(async (latestForm: FormData) => {
-    setLoading(true);
-    setError("");
-    setResult("");
-    setPdfUrlSafe(null);
-    setPdfDownloaded(false);
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(latestForm),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to generate");
-      setResult(data.result);
-      const entry: HistoryEntry = {
-        id: Date.now().toString(),
-        date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        service: latestForm.service,
-        amount: latestForm.amount,
-        docType: latestForm.docType,
-        clientName: latestForm.clientName || latestForm.clientCompany || "",
-        form: latestForm,
-        result: data.result,
-      };
-      saveToHistory(entry);
-      setHistory(loadHistory());
-
-      // Auto-render PDF preview immediately
-      setPdfLoading(true);
-      try {
-        const blob = await buildPdfBlob(latestForm, data.result);
-        setPdfUrlSafe(URL.createObjectURL(blob));
-      } catch { /* PDF preview failed gracefully */ }
-      setPdfLoading(false);
-
-      // Reset job-specific fields; keep contact details
-      setForm(p => ({ ...p, service: "", amount: "", invoiceNumber: "", dueDate: "" }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setLoading(false);
-    }
-  }, [setPdfUrlSafe]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await generateInvoice(form);
-  };
-
-  // ── Smart Fill ────────────────────────────────────────────────────────────
-  const handleSmartFill = async () => {
-    const urls = smartUrls.filter(u => u.trim());
-    if (!urls.length) return;
-    setSmartFillLoading(true);
-    setSmartFillMsg(null);
-    try {
-      const res = await fetch("/api/smart-fill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Failed");
-      const { extracted } = data;
-      setForm(p => {
-        const updated = {
-          ...p,
-          yourName: extracted.name || p.yourName,
-          yourCompany: extracted.company || p.yourCompany,
-          yourEmail: extracted.email || p.yourEmail,
-          yourPhone: extracted.phone || p.yourPhone,
-          footerNote: extracted.footerNote || p.footerNote,
-        };
-        return updated;
-      });
-      setShowSmartFill(false);
-      setShowOptional(true);
-      setSmartFillMsg({ type: "ok", text: "✓ Contact details filled from your links" });
-      setTimeout(() => setSmartFillMsg(null), 3000);
-    } catch (err) {
-      setSmartFillMsg({ type: "err", text: err instanceof Error ? err.message : "Could not read links" });
-    } finally {
-      setSmartFillLoading(false);
-    }
-  };
-
-  // ── Voice dictate ─────────────────────────────────────────────────────────
-  const startDictate = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-    if (dictating) { dictateRef.current?.stop(); return; }
-    dictateRef.current?.stop();
-    setDictateTranscript("");
-    setDictateStatus("idle");
-    const r = new SR();
-    r.continuous = true; r.interimResults = true; r.lang = "en-US";
-    r.onstart = () => setDictating(true);
-    r.onend = () => {
-      setDictating(false);
-      // auto-parse when mic stops
-      setDictateTranscript(prev => {
-        if (prev.trim()) parseDictationAndGenerate(prev);
-        return prev;
-      });
-    };
-    r.onerror = () => setDictating(false);
-    r.onresult = (e: any) => {
-      let t = "";
-      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      setDictateTranscript(t);
-    };
-    r.start();
-    dictateRef.current = r;
-  };
-
-  const parseDictationAndGenerate = async (text: string) => {
-    if (!text.trim()) return;
-    setDictateStatus("parsing");
-    try {
-      const res = await fetch("/api/parse-speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speech: text }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error);
-      const f = data.fields;
-      const updatedForm = (prev: FormData): FormData => ({
-        ...prev,
-        service: f.service || prev.service,
-        clientType: f.clientType || prev.clientType,
-        amount: f.amount || prev.amount,
-        tone: f.tone || prev.tone,
-        docType: f.docType || prev.docType,
-        clientName: f.clientName || prev.clientName,
-        clientCompany: f.clientCompany || prev.clientCompany,
-        dueDate: f.dueDate || prev.dueDate,
-        details: f.details || prev.details,
-      });
-      setForm(prev => {
-        const next = updatedForm(prev);
-        // Kick off generation with the latest merged form
-        setDictateStatus("generating");
-        setTimeout(() => generateInvoice(next), 0);
-        return next;
-      });
-      setDictateTranscript("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not parse speech");
-      setDictateStatus("idle");
-    }
-  };
-
-  // ── Per-field voice ────────────────────────────────────────────────────────
-  const startVoice = (field: VoiceField) => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-    if (voiceField === field) { recognitionRef.current?.stop(); return; }
-    recognitionRef.current?.stop();
-    const r = new SR();
-    r.continuous = false; r.interimResults = false; r.lang = "en-US";
-    r.onstart = () => setVoiceField(field);
-    r.onend = () => setVoiceField(null);
-    r.onerror = () => setVoiceField(null);
-    r.onresult = (e: any) => {
-      const t: string = e.results[0][0].transcript;
-      setForm(prev => ({ ...prev, [field]: prev[field] ? `${prev[field]} ${t}` : t }));
-    };
-    r.start();
-    recognitionRef.current = r;
-  };
-
-  // ── Download PDF ──────────────────────────────────────────────────────────
-  const handleDownloadPDF = async () => {
-    if (pdfLoading) return;
-    // If we already have the blob URL (from preview), just trigger download from it
-    if (pdfUrl) {
-      const link = document.createElement("a");
-      link.href = pdfUrl;
-      link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
-      document.body.appendChild(link); link.click();
-      document.body.removeChild(link);
-      setPdfDownloaded(true);
-      return;
-    }
-    // Fallback: build on demand
-    setPdfLoading(true);
-    try {
-      const blob = await buildPdfBlob(form, result);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url; link.download = `invoicemint-${form.docType}-${form.invoiceNumber || Date.now()}.pdf`;
-      document.body.appendChild(link); link.click();
-      document.body.removeChild(link); URL.revokeObjectURL(url);
-      setPdfDownloaded(true);
-    } catch (err) {
-      console.error("PDF error:", err);
-    } finally {
-      setPdfLoading(false);
-    }
-  };
-
-  const isQuote = form.docType === "quote";
-
-  const inputClass =
-    "w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-200";
-  const labelClass = "block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1";
-
-  const MicButton = ({ field, inTextarea }: { field: VoiceField; inTextarea?: boolean }) =>
-    voiceSupported ? (
-      <button
-        type="button"
-        onClick={() => startVoice(field)}
-        title={voiceField === field ? "Stop listening" : "Click to speak"}
-        className={`absolute right-2 ${inTextarea ? "top-2" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-lg transition-all duration-200 ${
-          voiceField === field ? "bg-red-50 text-red-500" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
-        }`}
-      >
-        {voiceField === field ? (
-          <span className="flex items-center">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping absolute" />
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-6.219-8.56" />
-            </svg>
-          </span>
-        ) : (
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-          </svg>
-        )}
-      </button>
-    ) : null;
-
-  const parseResult = (text: string) => {
-    const clean = text.replace(/\*\*/g, "");
-    const s1 = clean.match(/1\.\s*(?:Invoice |Quote )?Line Item Description[^\n]*\n?([\s\S]*?)(?=\n2\.|$)/i);
-    const s2 = clean.match(/2\.\s*Payment Terms[^\n]*\n?([\s\S]*?)(?=\n3\.|$)/i);
-    const s3 = clean.match(/3\.\s*(?:Thank You Note|Next Steps)[^\n]*\n?([\s\S]*?)$/i);
-    return {
-      lineItem: s1?.[1]?.trim() ?? clean,
-      paymentTerms: s2?.[1]?.trim() ?? "",
-      closing: s3?.[1]?.trim() ?? "",
-      closingLabel: /next steps/i.test(text) ? "Next Steps" : "Thank You",
-    };
-  };
-
-  const sections = result ? parseResult(result) : null;
-
-  // Dictate status helper
-  const dictateIsBusy = dictateStatus !== "idle" || dictating;
-  const dictateStatusLabel =
-    dictating ? "Listening… speak your invoice" :
-    dictateStatus === "parsing" ? "AI is reading your words…" :
-    dictateStatus === "generating" ? "Generating your invoice…" :
-    "🎤 Dictate entire invoice";
-  const dictateStatusColor = dictating
-    ? "border-red-300 bg-red-50"
-    : dictateStatus !== "idle"
-    ? "border-amber-300 bg-amber-50"
-    : "border-emerald-200 bg-emerald-50/60";
-
+export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-white">
 
-      {/* ── Header ── */}
-      <header className="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50 shrink-0">
-        <div className="max-w-6xl mx-auto px-4 h-12 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center shadow-sm">
-              <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
+      {/* Nav */}
+      <nav className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+          <span className="text-lg font-black tracking-tight">Deal<span className="text-violet-400">Flow</span></span>
+          <div className="flex items-center gap-3">
+            <Link href="/login" className="text-slate-400 hover:text-white text-sm transition-colors">Log in</Link>
+            <Link href="/login" className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+              Get started free →
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <section className="max-w-6xl mx-auto px-4 pt-16 pb-12">
+        <div className="text-center max-w-3xl mx-auto">
+          <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 rounded-full px-4 py-1.5 text-violet-300 text-xs font-semibold mb-6">
+            ✦ The platform Xero and FreshBooks never built
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-black leading-tight mb-4">
+            Scope it. Prove it.<br />
+            <span className="text-violet-400">Get paid.</span>
+          </h1>
+          <p className="text-slate-400 text-lg mb-8 leading-relaxed">
+            One shared workspace for vendors and clients — AI proposals, signed scope,
+            milestone proofs, change orders, and Stripe payments. No more invoice disputes.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <Link
+              href="/login"
+              className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-4 rounded-xl transition-colors text-base"
+            >
+              Start free — 3 deals included →
+            </Link>
+            <a
+              href="#how-it-works"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold px-8 py-4 rounded-xl transition-colors text-base"
+            >
+              See how it works
+            </a>
+          </div>
+          <p className="text-slate-500 text-xs mt-4">No credit card · No password · Free forever for 3 deals</p>
+        </div>
+
+        {/* Social proof pills */}
+        <div className="flex flex-wrap justify-center gap-3 mt-10">
+          {[
+            '✅ Scope disputes eliminated',
+            '📎 Milestone proof uploads',
+            '💬 WhatsApp alerts',
+            '🛡️ Dispute evidence trail',
+            '🤖 AI proposal drafting',
+          ].map(p => (
+            <span key={p} className="bg-slate-900 border border-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-full font-medium">{p}</span>
+          ))}
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section id="how-it-works" className="max-w-6xl mx-auto px-4 py-16">
+        <h2 className="text-2xl font-black text-center mb-10">From lead to paid in 4 steps</h2>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {STEPS.map(s => (
+            <div key={s.n} className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+              <span className="text-3xl font-black text-violet-400/40">{s.n}</span>
+              <h3 className="font-bold text-white mt-2 mb-1">{s.title}</h3>
+              <p className="text-slate-400 text-sm leading-relaxed">{s.desc}</p>
             </div>
-            <span className="font-extrabold text-slate-800 text-sm tracking-tight">
-              Invoice<span className="text-emerald-500">Mint</span>
-            </span>
-            <span className="hidden sm:block text-slate-300 mx-1">·</span>
-            <span className="hidden sm:block text-xs text-slate-500">AI Invoice &amp; Quote Generator</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {voiceSupported && (
-              <span className="hidden sm:flex items-center gap-1 text-xs text-emerald-600 font-medium bg-emerald-50 px-2 py-1 rounded-full border border-emerald-100">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-                Voice on
-              </span>
-            )}
-            {history.length > 0 && (
-              <button
-                onClick={() => setShowHistory(v => !v)}
-                className="flex items-center gap-1 text-xs text-slate-600 font-medium bg-slate-50 hover:bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200 transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Recent
-              </button>
-            )}
-            {(result || pdfUrl) && (
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-1 text-xs text-white font-semibold bg-emerald-500 hover:bg-emerald-600 px-2.5 py-1 rounded-full transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                New
-              </button>
-            )}
-            <span className="text-xs bg-emerald-50 text-emerald-700 font-medium px-2.5 py-1 rounded-full border border-emerald-200">
-              Free forever
-            </span>
-          </div>
+          ))}
         </div>
-      </header>
+      </section>
 
-      {/* ── Tool area ── */}
-      <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-4">
-
-        {/* Compact intro strip */}
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <div>
-            <h1 className="text-lg font-extrabold text-slate-800 leading-tight">
-              Speak. Generate. Download.
-            </h1>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Say your invoice — AI writes and renders the PDF instantly. No signup.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {[
-              { icon: "🎤", label: "Voice to invoice" },
-              { icon: "🤖", label: "AI generated" },
-              { icon: "📄", label: "Instant PDF" },
-            ].map(b => (
-              <span key={b.label} className="flex items-center gap-1 bg-white border border-slate-200 rounded-full px-2.5 py-1 text-xs text-slate-600 font-medium shadow-sm">
-                {b.icon} {b.label}
-              </span>
-            ))}
-          </div>
+      {/* Features grid */}
+      <section className="max-w-6xl mx-auto px-4 py-16">
+        <h2 className="text-2xl font-black text-center mb-2">Everything vendors and clients need</h2>
+        <p className="text-slate-400 text-center text-sm mb-10">All industries. Any project size.</p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {FEATURES.map(f => (
+            <div key={f.title} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 hover:border-violet-800/60 transition-colors">
+              <span className="text-2xl mb-3 block">{f.icon}</span>
+              <h3 className="font-bold text-white mb-1 text-sm">{f.title}</h3>
+              <p className="text-slate-400 text-xs leading-relaxed">{f.desc}</p>
+            </div>
+          ))}
         </div>
+      </section>
 
-        {/* Two-column: form | preview */}
-        <div className="grid md:grid-cols-2 gap-4 items-start">
+      {/* Comparison table */}
+      <section className="max-w-4xl mx-auto px-4 py-16">
+        <h2 className="text-2xl font-black text-center mb-10">Why not just use Xero or FreshBooks?</h2>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div className="grid grid-cols-4 bg-slate-800/50 px-6 py-3 text-xs font-bold uppercase tracking-wide text-slate-400">
+            <span className="col-span-1">Feature</span>
+            <span className="text-center">Xero</span>
+            <span className="text-center">FreshBooks</span>
+            <span className="text-center text-violet-400">DealFlow</span>
+          </div>
+          {COMPARE.map((row, i) => (
+            <div key={row.feature} className={`grid grid-cols-4 px-6 py-3 text-sm ${i % 2 === 0 ? '' : 'bg-slate-900/50'}`}>
+              <span className="text-slate-300 text-xs">{row.feature}</span>
+              <span className="text-center">{row.xero ? '✅' : '❌'}</span>
+              <span className="text-center">{row.freshbooks === 'basic' ? '⚠️' : row.freshbooks ? '✅' : '❌'}</span>
+              <span className="text-center">{row.us ? '✅' : '❌'}</span>
+            </div>
+          ))}
+        </div>
+      </section>
 
-          {/* ── Left: Form ── */}
-          <div className="space-y-3">
-
-            {/* Doc type toggle */}
-            <div className="bg-white border border-slate-100 rounded-xl p-1 shadow-sm flex gap-1">
-              {(["invoice", "quote"] as const).map(type => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setForm(p => ({ ...p, docType: type }))}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 ${
-                    form.docType === type
-                      ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {type === "invoice" ? (
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-                    </svg>
-                  )}
-                  {type === "invoice" ? "Invoice" : "Quote / Estimate"}
-                </button>
+      {/* Pricing */}
+      <section className="max-w-4xl mx-auto px-4 py-16">
+        <h2 className="text-2xl font-black text-center mb-10">Simple pricing</h2>
+        <div className="grid sm:grid-cols-2 gap-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
+            <h3 className="font-black text-white text-xl mb-1">Free</h3>
+            <p className="text-3xl font-black text-white mb-4">$0 <span className="text-slate-500 text-base font-normal">forever</span></p>
+            <ul className="space-y-2 text-sm text-slate-300 mb-8">
+              {['3 active deals', 'Scope + milestone tracking', 'Online payments', 'Deal comms thread'].map(f => (
+                <li key={f} className="flex items-center gap-2"><span className="text-violet-400">✓</span>{f}</li>
               ))}
-            </div>
-
-            {/* Form card */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
-              <form onSubmit={handleSubmit} className="space-y-3">
-
-                {/* ── Dictate entire invoice ── */}
-                {voiceSupported && (
-                  <div className={`rounded-xl border transition-all duration-300 ${dictateStatusColor} p-3`}>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={dictateIsBusy && !dictating ? undefined : startDictate}
-                        disabled={dictateStatus === "parsing" || dictateStatus === "generating"}
-                        className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-sm font-bold text-lg ${
-                          dictating
-                            ? "bg-red-500 text-white shadow-red-200"
-                            : dictateStatus !== "idle"
-                            ? "bg-amber-400 text-white shadow-amber-200 cursor-wait"
-                            : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-200"
-                        }`}
-                      >
-                        {dictating ? (
-                          <span className="relative flex items-center justify-center">
-                            <span className="absolute w-6 h-6 bg-red-300 rounded-full animate-ping opacity-75" />
-                            <svg className="w-5 h-5 relative" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                            </svg>
-                          </span>
-                        ) : dictateStatus !== "idle" ? (
-                          <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                          </svg>
-                        )}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-bold ${dictating ? "text-red-700" : dictateStatus !== "idle" ? "text-amber-700" : "text-emerald-700"}`}>
-                          {dictateStatusLabel}
-                        </p>
-                        <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
-                          {dictateTranscript
-                            ? <span className="italic">&ldquo;{dictateTranscript.slice(0, 120)}{dictateTranscript.length > 120 ? "…" : ""}&rdquo;</span>
-                            : dictating
-                            ? <span className="text-slate-400">e.g. &ldquo;Invoice for logo design, $800 for Acme Corp, due in 30 days&rdquo;</span>
-                            : <span className="text-slate-400">Tap mic → speak → PDF appears automatically</span>
-                          }
-                        </p>
-                      </div>
-                    </div>
-                    {dictateStatus === "idle" && !dictating && (
-                      <p className="text-[10px] text-emerald-600/70 mt-2 text-center font-medium tracking-wide">
-                        SAY IT ALL AT ONCE · AI FILLS EVERY FIELD · PDF PREVIEWS INSTANTLY
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {/* Service */}
-                <div>
-                  <label className={labelClass}>Service / Work Done <span className="text-red-400">*</span></label>
-                  <div className="relative">
-                    <input
-                      type="text" name="service" value={form.service} onChange={handleChange}
-                      placeholder="e.g. Website design, Logo creation, Tax consulting"
-                      required
-                      className={`${inputClass} ${voiceSupported ? "pr-8" : ""}`}
-                    />
-                    <MicButton field="service" />
-                  </div>
-                </div>
-
-                {/* Client Type + Amount + Tone */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className={labelClass}>Client Type <span className="text-red-400">*</span></label>
-                    <select name="clientType" value={form.clientType} onChange={handleChange} required className={inputClass}>
-                      <option value="">Select…</option>
-                      <option value="individual">Individual</option>
-                      <option value="small business">Small Business</option>
-                      <option value="startup">Startup</option>
-                      <option value="enterprise">Enterprise</option>
-                      <option value="nonprofit">Non-profit</option>
-                      <option value="government">Government</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelClass}>Amount <span className="text-red-400">*</span></label>
-                    <input
-                      type="text" name="amount" value={form.amount} onChange={handleChange}
-                      placeholder="$1,500" required className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Tone <span className="text-red-400">*</span></label>
-                    <select name="tone" value={form.tone} onChange={handleChange} className={inputClass}>
-                      <option value="formal">Formal</option>
-                      <option value="friendly">Friendly</option>
-                      <option value="concise">Concise</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Invoice # + Due Date */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className={labelClass}>
-                      {isQuote ? "Quote #" : "Invoice #"}{" "}
-                      <span className="text-slate-400 normal-case font-normal">(opt.)</span>
-                    </label>
-                    <input
-                      type="text" name="invoiceNumber" value={form.invoiceNumber} onChange={handleChange}
-                      placeholder="INV-001" className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className={labelClass}>
-                      {isQuote ? "Valid Until" : "Due Date"}{" "}
-                      <span className="text-slate-400 normal-case font-normal">(opt.)</span>
-                    </label>
-                    <input type="date" name="dueDate" value={form.dueDate} onChange={handleChange} className={inputClass} />
-                  </div>
-                </div>
-
-                {/* Smart Fill from Links */}
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowSmartFill(v => !v)}
-                    className="w-full flex items-center justify-between py-2 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 border-dashed rounded-lg text-xs text-emerald-700 font-medium transition-colors"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                      </svg>
-                      ✦ Smart Fill — paste your links, AI fills your details
-                    </span>
-                    <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${showSmartFill ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {showSmartFill && (
-                    <div className="mt-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
-                      <p className="text-[11px] text-emerald-700 font-medium">
-                        Paste your LinkedIn, website, or portfolio URL — AI extracts your name, company, email &amp; phone.
-                      </p>
-                      {smartUrls.map((url, i) => (
-                        <input
-                          key={i}
-                          type="url"
-                          value={url}
-                          onChange={e => setSmartUrls(prev => prev.map((u, j) => j === i ? e.target.value : u))}
-                          placeholder={i === 0 ? "https://linkedin.com/in/yourname" : i === 1 ? "https://yourwebsite.com" : "https://portfolio.com (optional)"}
-                          className="w-full bg-white border border-emerald-200 rounded-lg px-3 py-2 text-xs text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                        />
-                      ))}
-                      <button
-                        type="button"
-                        onClick={handleSmartFill}
-                        disabled={smartFillLoading || !smartUrls.some(u => u.trim())}
-                        className="w-full flex items-center justify-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-xs transition-colors"
-                      >
-                        {smartFillLoading ? (
-                          <>
-                            <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                            Reading your links…
-                          </>
-                        ) : "Auto-fill my details →"}
-                      </button>
-                    </div>
-                  )}
-                  {smartFillMsg && (
-                    <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-medium ${smartFillMsg.type === "ok" ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
-                      {smartFillMsg.text}
-                    </div>
-                  )}
-                </div>
-
-                {/* Optional: Company & Contact */}
-                <button
-                  type="button"
-                  onClick={() => setShowOptional(v => !v)}
-                  className="w-full flex items-center justify-between py-2 px-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 border-dashed rounded-lg text-xs text-slate-600 font-medium transition-colors"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    Company &amp; Contact Details
-                    <span className="text-slate-400 font-normal">— appears in PDF</span>
-                  </span>
-                  <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${showOptional ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-
-                {showOptional && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
-                    <div>
-                      <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mb-2">Your Info</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input type="text" name="yourName" value={form.yourName} onChange={handleChange} placeholder="Your name" className={inputClass} />
-                        <input type="text" name="yourCompany" value={form.yourCompany} onChange={handleChange} placeholder="Your company" className={inputClass} />
-                        <input type="email" name="yourEmail" value={form.yourEmail} onChange={handleChange} placeholder="Email" className={inputClass} />
-                        <input type="tel" name="yourPhone" value={form.yourPhone} onChange={handleChange} placeholder="Phone" className={inputClass} />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Client Info</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input type="text" name="clientName" value={form.clientName} onChange={handleChange} placeholder="Client name" className={inputClass} />
-                        <input type="text" name="clientCompany" value={form.clientCompany} onChange={handleChange} placeholder="Client company" className={inputClass} />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-emerald-600 uppercase tracking-widest mb-2">Branding</p>
-                      <div className="space-y-2">
-                        <input
-                          type="url" name="logoUrl" value={form.logoUrl} onChange={handleChange}
-                          placeholder="Logo URL (e.g. https://yoursite.com/logo.png)"
-                          className={inputClass}
-                        />
-                        <div className="flex gap-2 items-center">
-                          <div className="flex items-center gap-2 flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2">
-                            <label className="text-xs text-slate-500 font-medium whitespace-nowrap">Accent colour</label>
-                            <input
-                              type="color" name="accentColor" value={form.accentColor} onChange={handleChange}
-                              className="w-8 h-6 rounded cursor-pointer border-0 bg-transparent p-0"
-                            />
-                            <span className="text-xs font-mono text-slate-400">{form.accentColor}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setForm(p => ({ ...p, accentColor: "#10b981" }))}
-                            className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 border border-slate-200 rounded-lg bg-white"
-                          >
-                            Reset
-                          </button>
-                        </div>
-                        <input
-                          type="text" name="footerNote" value={form.footerNote} onChange={handleChange}
-                          placeholder="Footer note (e.g. ABN 12 345 · Bank: BSB 123-456 · Acc: 12345678)"
-                          className={inputClass}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Notes */}
-                <div>
-                  <label className={labelClass}>Notes <span className="text-slate-400 normal-case font-normal">(opt.)</span></label>
-                  <div className="relative">
-                    <textarea
-                      name="details" value={form.details} onChange={handleChange}
-                      rows={2}
-                      placeholder="e.g. 3 revisions, net-30, delivered in 5 days…"
-                      className={`${inputClass} resize-none ${voiceSupported ? "pr-8" : ""}`}
-                    />
-                    <MicButton field="details" inTextarea />
-                  </div>
-                </div>
-
-                {/* Submit */}
-                <button
-                  type="submit"
-                  disabled={loading || dictateIsBusy}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-md shadow-emerald-100 flex items-center justify-center gap-2 text-sm"
-                >
-                  {loading ? (
-                    <>
-                      <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      Generating {isQuote ? "quote" : "invoice"}…
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Generate {isQuote ? "Quote" : "Invoice"}
-                    </>
-                  )}
-                </button>
-
-                <p className="text-center text-xs text-slate-400">
-                  Data used only for generation — never stored.
-                </p>
-              </form>
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl p-3 text-red-600 text-xs">
-                <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                {error}
-              </div>
-            )}
+            </ul>
+            <Link href="/login" className="block w-full text-center bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3 rounded-xl transition-colors text-sm">
+              Start free →
+            </Link>
           </div>
-
-          {/* ── Right: PDF Preview / Loading / Placeholder ── */}
-          <div className="sticky top-16">
-
-            {/* PDF iframe preview */}
-            {pdfUrl && (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span className="text-white font-bold text-sm">
-                      {isQuote ? "Quote" : "Invoice"} Preview
-                    </span>
-                  </div>
-                  <span className="text-emerald-200 text-xs">Ready to download</span>
-                </div>
-                <iframe
-                  src={pdfUrl}
-                  className="w-full border-0"
-                  style={{ height: "520px" }}
-                  title="Invoice PDF Preview"
-                />
-                <div className="flex gap-2 px-4 py-3 border-t border-slate-100 bg-slate-50">
-                  <button
-                    onClick={handleDownloadPDF}
-                    disabled={pdfLoading}
-                    className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-lg transition-all duration-200 text-xs shadow-sm"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    {pdfDownloaded ? "Download Again" : "Download PDF"}
-                  </button>
-                  <button
-                    onClick={handleReset}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
-                    New
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Loading state — shown while generating or rendering PDF */}
-            {!pdfUrl && (loading || pdfLoading || dictateStatus !== "idle") && (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-600/30 to-teal-600/30 px-5 py-4">
-                  <div className="h-6 w-32 bg-emerald-200/60 rounded animate-pulse" />
-                </div>
-                <div className="px-5 py-8 flex flex-col items-center gap-5">
-                  <div className="relative w-16 h-16">
-                    <div className="absolute inset-0 rounded-full border-4 border-emerald-100" />
-                    <div className="absolute inset-0 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <svg className="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-700">
-                      {pdfLoading ? "Rendering PDF…" : dictateStatus === "parsing" ? "Reading your words…" : dictateStatus === "generating" ? "Writing your invoice…" : "Generating invoice…"}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {pdfLoading ? "Building your professional PDF" : "AI is crafting your document"}
-                    </p>
-                  </div>
-                  <div className="w-full space-y-2">
-                    {[100, 85, 70, 55].map((w, i) => (
-                      <div key={i} className={`h-2 bg-slate-100 rounded animate-pulse`} style={{ width: `${w}%`, animationDelay: `${i * 150}ms` }} />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Placeholder — nothing happening yet */}
-            {!pdfUrl && !loading && !pdfLoading && dictateStatus === "idle" && (
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 border-dashed overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-600/20 to-teal-600/20 px-5 py-5 flex items-start justify-between">
-                  <div>
-                    <div className="h-2.5 w-20 bg-emerald-200/60 rounded mb-2" />
-                    <div className="h-6 w-28 bg-emerald-300/40 rounded" />
-                  </div>
-                  <div className="text-right space-y-1">
-                    <div className="h-2 w-24 bg-slate-200/60 rounded ml-auto" />
-                    <div className="h-2 w-16 bg-slate-200/60 rounded ml-auto" />
-                  </div>
-                </div>
-
-                <div className="px-5 py-6 flex flex-col items-center justify-center text-center gap-4">
-                  <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center">
-                    <svg className="w-7 h-7 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">PDF preview appears here</p>
-                    <p className="text-xs text-slate-400 mt-1 max-w-[220px] leading-relaxed">
-                      Tap the mic and speak — or fill the form and click Generate. Your PDF renders instantly.
-                    </p>
-                  </div>
-
-                  {voiceSupported && (
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3 w-full">
-                      <p className="text-xs font-bold text-emerald-700 mb-1">Try saying:</p>
-                      <p className="text-xs text-emerald-600 italic leading-relaxed">
-                        &ldquo;Invoice for logo design, $800 for Acme Corp, due in 30 days&rdquo;
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="w-full space-y-2 mt-1">
-                    {[
-                      { n: "1", t: voiceSupported ? "Tap mic and say your invoice" : "Describe your service" },
-                      { n: "2", t: "Set amount & tone" },
-                      { n: "3", t: "Hit Generate (or it auto-generates)" },
-                      { n: "4", t: "PDF previews — one click to download" },
-                    ].map(s => (
-                      <div key={s.n} className="flex items-center gap-2.5 text-left">
-                        <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center shrink-0">
-                          {s.n}
-                        </span>
-                        <span className="text-xs text-slate-500">{s.t}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="w-full space-y-1.5 mt-2 opacity-25">
-                    <div className="h-2 bg-slate-200 rounded w-full" />
-                    <div className="h-2 bg-slate-200 rounded w-5/6" />
-                    <div className="h-2 bg-slate-200 rounded w-4/6" />
-                    <div className="h-px bg-slate-100 my-2" />
-                    <div className="h-2 bg-slate-200 rounded w-full" />
-                    <div className="h-2 bg-slate-200 rounded w-3/4" />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Recent invoices history panel ── */}
-      {showHistory && history.length > 0 && (
-        <div className="max-w-6xl mx-auto w-full px-4 mt-4">
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-bold text-slate-700">Recent Documents</h2>
-              <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-600">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-2">
-              {history.map(entry => (
-                <div
-                  key={entry.id}
-                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-emerald-200 cursor-pointer transition-colors"
-                  onClick={() => {
-                    setForm(entry.form);
-                    setResult(entry.result);
-                    setPdfDownloaded(false);
-                    setShowHistory(false);
-                    // Re-render PDF for this history entry
-                    setPdfLoading(true);
-                    buildPdfBlob(entry.form, entry.result)
-                      .then(blob => setPdfUrlSafe(URL.createObjectURL(blob)))
-                      .catch(() => {})
-                      .finally(() => setPdfLoading(false));
-                  }}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${entry.docType === "invoice" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"}`}>
-                      {entry.docType}
-                    </span>
-                    <div>
-                      <p className="text-xs font-semibold text-slate-700">{entry.service}</p>
-                      {entry.clientName && <p className="text-[10px] text-slate-400">{entry.clientName}</p>}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 ml-4">
-                    <p className="text-xs font-bold text-emerald-600">{entry.amount}</p>
-                    <p className="text-[10px] text-slate-400">{entry.date}</p>
-                  </div>
-                </div>
+          <div className="bg-violet-600 rounded-2xl p-8 relative overflow-hidden">
+            <div className="absolute top-4 right-4 bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">Popular</div>
+            <h3 className="font-black text-white text-xl mb-1">Pro</h3>
+            <p className="text-3xl font-black text-white mb-4">$12 <span className="text-violet-200 text-base font-normal">/ month</span></p>
+            <ul className="space-y-2 text-sm text-white mb-8">
+              {[
+                'Unlimited deals',
+                'WhatsApp notifications',
+                'Custom invoice branding',
+                'AI proposal drafting',
+                'Dispute evidence trail',
+                'Priority support',
+              ].map(f => (
+                <li key={f} className="flex items-center gap-2"><span className="text-white/70">✓</span>{f}</li>
               ))}
-            </div>
-            <p className="text-[10px] text-slate-400 mt-3 text-center">Stored locally in your browser — never sent to any server</p>
+            </ul>
+            <Link href="/login" className="block w-full text-center bg-white text-violet-700 font-bold py-3 rounded-xl transition-opacity hover:opacity-90 text-sm">
+              Start Pro →
+            </Link>
           </div>
         </div>
-      )}
+      </section>
 
-      {/* ── Below fold: SEO content ── */}
-      <div className="max-w-6xl mx-auto w-full px-4 pb-12 space-y-8 mt-6">
-
-        <AdBanner slot="1122334455" format="horizontal" className="min-h-[90px] bg-slate-100 rounded-xl" />
-
-        <section>
-          <h2 className="text-base font-bold text-slate-800 mb-3">How InvoiceMint Works</h2>
-          <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { step: "01", icon: "🎤", title: "Speak or type", desc: "Tap the mic and say your invoice — AI hears everything at once." },
-              { step: "02", icon: "🤖", title: "AI parses & writes", desc: "Fields fill automatically. Line items, payment terms, closing — all written for you." },
-              { step: "03", icon: "👁️", title: "PDF previews live", desc: "Your professional PDF renders in the panel — no extra steps." },
-              { step: "04", icon: "📄", title: "One-click download", desc: "Hit Download and send it to your client." },
-            ].map(item => (
-              <div key={item.step} className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">{item.icon}</span>
-                  <span className="text-xs font-bold text-emerald-400 tracking-widest">STEP {item.step}</span>
-                </div>
-                <p className="font-semibold text-slate-800 text-sm mb-0.5">{item.title}</p>
-                <p className="text-slate-500 text-xs leading-relaxed">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-base font-bold text-slate-800 mb-3">Frequently Asked Questions</h2>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {[
-              { q: "Is InvoiceMint completely free?", a: "Yes, 100% free. No account, no credit card, no limits." },
-              { q: "How does voice input work?", a: "Tap the mic, say your full invoice in natural speech — AI extracts service, amount, client, due date and fills every field." },
-              { q: "Do I get a PDF preview?", a: "Yes! As soon as generation finishes, the PDF renders live in the right panel. One click to download." },
-              { q: "Invoice vs quote — what's the difference?", a: "A quote is sent before work starts. An invoice is sent after work is complete, requesting payment." },
-              { q: "Can I add my company details?", a: "Yes — expand 'Company & Contact Details', or use Smart Fill to paste your LinkedIn/website URL and AI fills them for you." },
-              { q: "How does the AI generate text?", a: "InvoiceMint uses advanced language models tuned to your service, amount, client type, and tone." },
-            ].map((faq, i) => (
-              <div key={i} className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
-                <p className="font-semibold text-slate-800 text-sm mb-1">{faq.q}</p>
-                <p className="text-slate-500 text-xs leading-relaxed">{faq.a}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      {/* ── Footer ── */}
-      <footer className="border-t border-slate-100 bg-white py-6">
-        <div className="max-w-6xl mx-auto px-4 text-center">
-          <div className="flex items-center justify-center gap-1.5 mb-2">
-            <div className="w-5 h-5 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-md flex items-center justify-center">
-              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <span className="font-extrabold text-slate-700 text-sm">Invoice<span className="text-emerald-500">Mint</span></span>
-          </div>
-          <p className="text-slate-400 text-xs">Free AI Invoice &amp; Quote Generator — Voice Input &amp; Instant PDF Preview</p>
-          <p className="text-slate-400 text-xs mt-1">© {new Date().getFullYear()} InvoiceMint — No sign up required</p>
+      {/* FAQ */}
+      <section className="max-w-3xl mx-auto px-4 py-16">
+        <h2 className="text-2xl font-black text-center mb-10">Frequently asked questions</h2>
+        <div className="space-y-4">
+          {[
+            { q: 'What is DealFlow?', a: 'DealFlow is a vendor-client platform that covers the full project lifecycle — from AI-drafted proposals and scope agreements through milestone tracking, change orders, and Stripe-powered payments. Unlike Xero or FreshBooks, it starts before the invoice.' },
+            { q: 'Who uses DealFlow?', a: 'Any vendor who works on projects: freelancers, agencies, contractors, consultants, home service providers, software developers. Clients are invited by the vendor and get their own portal.' },
+            { q: 'How does scope agreement work?', a: "The vendor creates scope line items (description, qty, unit price). The client reviews and approves each one. Once approved, scope locks — any extra work requires a signed change order. This eliminates \"that wasn't included\" disputes." },
+            { q: 'Does the client need to sign up?', a: 'Yes — the client creates a free account when they accept the invite link. This gives both parties a shared deal workspace.' },
+            { q: 'How does payment work?', a: 'DealFlow generates a Stripe payment link per invoice. The client pays in their browser. No Stripe account needed on the client side.' },
+            { q: 'What are WhatsApp notifications?', a: 'Vendors and clients can opt in to receive WhatsApp messages when key events happen: scope approved, milestone complete, invoice paid, new message. Powered by Twilio.' },
+          ].map(({ q, a }) => (
+            <details key={q} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 group">
+              <summary className="font-semibold text-white cursor-pointer list-none flex justify-between items-center text-sm">
+                {q}
+                <span className="text-slate-500 group-open:rotate-180 transition-transform">↓</span>
+              </summary>
+              <p className="text-slate-400 text-sm mt-3 leading-relaxed">{a}</p>
+            </details>
+          ))}
         </div>
+      </section>
+
+      {/* CTA */}
+      <section className="max-w-3xl mx-auto px-4 py-16 text-center">
+        <h2 className="text-3xl font-black mb-4">Stop losing deals to scope disputes</h2>
+        <p className="text-slate-400 mb-8">Start with 3 free deals. No credit card. No password.</p>
+        <Link href="/login" className="inline-block bg-violet-600 hover:bg-violet-700 text-white font-bold px-10 py-4 rounded-xl transition-colors text-base">
+          Create your first deal →
+        </Link>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-800 py-8 text-center text-slate-500 text-xs">
+        <div className="mb-2 font-black text-white text-sm">Deal<span className="text-violet-400">Flow</span></div>
+        <p>Vendor-client platform — proposals, milestones, payments.</p>
+        <p className="mt-1">© {new Date().getFullYear()} DealFlow · <a href="/privacy" className="hover:text-white transition-colors">Privacy</a> · <a href="/terms" className="hover:text-white transition-colors">Terms</a></p>
       </footer>
     </div>
-  );
+  )
 }

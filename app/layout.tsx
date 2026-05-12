@@ -1,51 +1,57 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import Script from "next/script";
-import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"] });
+import type { Metadata } from 'next'
+import './globals.css'
 
 export const metadata: Metadata = {
-  title: "InvoiceMint — AI-Powered Free Invoice & Quote Generator for Freelancers & Small Businesses",
-  description:
-    "Effortlessly create professional invoices, quotes & payment terms with AI. Free online invoice generator for freelancers & small businesses. Fast, easy, no signup required.",
-  keywords:
-    "free invoice generator, AI invoice generator, quote generator, invoice description, professional invoice, freelance invoice, small business invoice",
-  metadataBase: new URL("https://invoicemint.cloud"),
+  title: 'DealFlow — Vendor-Client Platform | Proposals, Milestones & Payments',
+  description: 'The only platform where vendors and clients agree on scope, track milestones, handle change orders, and get paid — all in one place. No more invoice disputes.',
+  keywords: 'vendor client platform, freelance invoicing, scope agreement, milestone tracker, invoice disputes, proposal software',
   openGraph: {
-    title: "InvoiceMint — Free AI Invoice & Quote Generator",
-    description:
-      "Generate professional invoices and quotes instantly. Free AI tool for freelancers and businesses. No signup required.",
-    type: "website",
-    url: "https://invoicemint.cloud",
+    title: 'DealFlow — Scope. Milestone. Pay.',
+    description: 'Stop chasing invoices. Stop scope disputes. DealFlow gives vendors and clients one shared workspace — from proposal to payment.',
+    url: 'https://dealflow.app',
+    siteName: 'DealFlow',
+    type: 'website',
   },
-  alternates: {
-    canonical: "https://invoicemint.cloud",
+  twitter: {
+    card: 'summary_large_image',
+    title: 'DealFlow — Vendor-Client Platform',
+    description: 'Proposals. Milestones. Payments. One platform for vendors and clients.',
   },
-  robots: "index, follow",
-};
+  robots: { index: true, follow: true },
+  alternates: { canonical: 'https://dealflow.app' },
+}
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'DealFlow',
+  applicationCategory: 'BusinessApplication',
+  description: 'Vendor-client platform for proposals, scope agreement, milestone tracking, and payments.',
+  offers: [
+    { '@type': 'Offer', price: '0', priceCurrency: 'USD', name: 'Free' },
+    { '@type': 'Offer', price: '12', priceCurrency: 'USD', name: 'Pro', billingDuration: 'P1M' },
+  ],
+  featureList: [
+    'AI proposal drafting',
+    'Scope agreement with e-signature',
+    'Milestone tracking with proof uploads',
+    'Change order management',
+    'Stripe payment links',
+    'WhatsApp notifications',
+    'Dispute evidence trail',
+  ],
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        {children}
-        <Script
-          async
-          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${process.env.NEXT_PUBLIC_ADSENSE_ID}`}
-          crossOrigin="anonymous"
-          strategy="lazyOnload"
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        <Script
-          src="http://31.97.56.148:3098/t.js"
-          data-site="invoicemint.cloud"
-          strategy="lazyOnload"
-        />
-      </body>
+      </head>
+      <body className="antialiased">{children}</body>
     </html>
-  );
+  )
 }
