@@ -27,13 +27,19 @@ export default async function DashboardPage() {
   const user = await getSessionUser()
   if (!user) redirect('/login')
 
-  const deals = await db.deal.findMany({
-    where: { vendorId: user.id },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      _count: { select: { milestones: true, messages: true } },
-    },
-  })
+  const [deals, dbUser] = await Promise.all([
+    db.deal.findMany({
+      where: { vendorId: user.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { milestones: true, messages: true } },
+      },
+    }),
+    db.user.findUnique({ where: { id: user.id }, select: { plan: true } }),
+  ])
+
+  const isPro = dbUser?.plan === 'PRO'
+  const atFreeLimit = !isPro && deals.length >= 3
 
   const stats = {
     total: deals.length,
@@ -55,14 +61,36 @@ export default async function DashboardPage() {
           >
             Quick Invoice ↗
           </Link>
-          <Link
-            href="/deal/new"
-            className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
-          >
-            + New deal
-          </Link>
+          {atFreeLimit ? (
+            <Link
+              href="/upgrade"
+              className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
+            >
+              Upgrade for more →
+            </Link>
+          ) : (
+            <Link
+              href="/deal/new"
+              className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-5 py-2.5 rounded-xl transition-colors text-sm"
+            >
+              + New deal
+            </Link>
+          )}
         </div>
       </div>
+
+      {/* Free plan limit banner */}
+      {atFreeLimit && (
+        <div className="bg-violet-900/30 border border-violet-700/50 rounded-2xl p-4 mb-6 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-violet-300 font-semibold text-sm">Free plan limit reached</p>
+            <p className="text-violet-400/70 text-xs mt-0.5">You've used all 3 free deals. Upgrade to Pro for unlimited deals.</p>
+          </div>
+          <Link href="/upgrade" className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors flex-shrink-0">
+            Upgrade $12/mo →
+          </Link>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-8">

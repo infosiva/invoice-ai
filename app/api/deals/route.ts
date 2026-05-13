@@ -24,6 +24,15 @@ export async function POST(req: NextRequest) {
   const { title, brief, clientEmail } = await req.json()
   if (!title?.trim()) return NextResponse.json({ error: 'Title required' }, { status: 400 })
 
+  // Enforce free plan limit
+  const [dbUser, dealCount] = await Promise.all([
+    db.user.findUnique({ where: { id: session.userId }, select: { plan: true } }),
+    db.deal.count({ where: { vendorId: session.userId } }),
+  ])
+  if (dbUser?.plan !== 'PRO' && dealCount >= 3) {
+    return NextResponse.json({ error: 'Free plan limit reached. Upgrade to Pro for unlimited deals.' }, { status: 403 })
+  }
+
   const deal = await db.deal.create({
     data: {
       title: title.trim(),

@@ -7,13 +7,16 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  role      UserRole @default(VENDOR)
-  waNumber  String?
-  waOptIn   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id                     String    @id @default(cuid())
+  email                  String    @unique
+  name                   String?
+  role                   UserRole  @default(VENDOR)
+  plan                   UserPlan  @default(FREE)
+  waNumber               String?
+  waOptIn                Boolean   @default(false)
+  stripeCustomerId       String?
+  stripeSubscriptionId   String?
+  createdAt              DateTime  @default(now())
 
   vendorDeals  Deal[]        @relation("VendorDeals")
   clientDeals  Deal[]        @relation("ClientDeals")
@@ -25,6 +28,11 @@ model User {
 enum UserRole {
   VENDOR
   CLIENT
+}
+
+enum UserPlan {
+  FREE
+  PRO
 }
 
 model AuthToken {
