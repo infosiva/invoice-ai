@@ -57,9 +57,13 @@ export default function SendSheet({ invoice, onBack }: Props) {
   }
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(paymentUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(paymentUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setErrorMsg('Failed to copy — please select and copy the link manually')
+    }
   }
 
   const inputClass =
