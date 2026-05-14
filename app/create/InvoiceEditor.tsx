@@ -27,7 +27,7 @@ export default function InvoiceEditor({ invoice, onChange }: Props) {
   }, [invoice, onChange])
 
   const addItem = useCallback(() => {
-    onChange({ ...invoice, lineItems: [...invoice.lineItems, { description: '', qty: 1, unitPrice: 0 }] })
+    onChange({ ...invoice, lineItems: [...invoice.lineItems, { id: Date.now().toString(), description: '', qty: 1, unitPrice: 0 }] })
   }, [invoice, onChange])
 
   const removeItem = useCallback((idx: number) => {
@@ -93,7 +93,7 @@ export default function InvoiceEditor({ invoice, onChange }: Props) {
             <span className="col-span-2 text-right">Total</span>
           </div>
           {invoice.lineItems.map((item, i) => (
-            <div key={i} className="grid grid-cols-12 px-4 py-2 gap-2 items-center border-b border-slate-800/50 last:border-0 group">
+            <div key={(item as { id?: string }).id ?? i} className="grid grid-cols-12 px-4 py-2 gap-2 items-center border-b border-slate-800/50 last:border-0 group">
               <input
                 value={item.description}
                 onChange={e => updateItem(i, 'description', e.target.value)}
@@ -115,7 +115,7 @@ export default function InvoiceEditor({ invoice, onChange }: Props) {
                 className="col-span-2 bg-transparent text-slate-300 text-sm text-right focus:outline-none focus:bg-slate-800 rounded px-1 py-0.5 transition-colors w-full"
               />
               <div className="col-span-2 flex items-center justify-end gap-1">
-                <span className="text-white text-sm font-semibold">${(item.qty * item.unitPrice).toLocaleString()}</span>
+                <span className="text-white text-sm font-semibold">${Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.qty * item.unitPrice)}</span>
                 <button
                   onClick={() => removeItem(i)}
                   className="text-slate-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all ml-1 text-xs"
@@ -131,7 +131,7 @@ export default function InvoiceEditor({ invoice, onChange }: Props) {
                 ? `Total (after ${invoice.discount.value}${invoice.discount.type === 'percent' ? '%' : '$'} discount)`
                 : 'Total'}
             </span>
-            <span className="col-span-2 text-right text-white font-black text-base">${total.toLocaleString()}</span>
+            <span className="col-span-2 text-right text-white font-black text-base">${Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total)}</span>
           </div>
         </div>
       </div>

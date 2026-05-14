@@ -25,6 +25,7 @@ export default function VoiceInput({ onTranscript, onParsing }: Props) {
     recognition.lang = 'en-US'
 
     recognition.onresult = (e: SpeechRecognitionEvent) => {
+      if (!e.results.length) return
       const t = Array.from(e.results).map(r => r[0].transcript).join('')
       setTranscript(t)
       if (e.results[0].isFinal) {
@@ -84,7 +85,7 @@ export default function VoiceInput({ onTranscript, onParsing }: Props) {
         <textarea
           value={text}
           onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit() }}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() } }}
           placeholder={'Try: "Charge Sarah $2,500 for logo design, 3 revisions, due in 2 weeks"'}
           rows={3}
           className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-4 py-3 text-white text-sm placeholder-slate-500 resize-none focus:outline-none focus:border-violet-500 transition-colors"
