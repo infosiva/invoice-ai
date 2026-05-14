@@ -13,11 +13,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Link href="/dashboard" className="text-lg font-black tracking-tight">
             Deal<span className="text-violet-400">Flow</span>
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <Link href="/create" className="text-slate-400 hover:text-white text-sm font-medium transition-colors hidden sm:block">
+              Create Invoice
+            </Link>
             <Link href="/upgrade" className="text-violet-400 hover:text-violet-300 text-sm font-semibold transition-colors">
               Upgrade ✦
             </Link>
-            <span className="text-slate-400 text-sm">{user.email}</span>
+            <span className="text-slate-500 text-sm hidden md:block">{user.email}</span>
             <form action="/api/auth/logout" method="POST">
               <button type="submit" className="text-slate-500 hover:text-white text-sm transition-colors">
                 Log out

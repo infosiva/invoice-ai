@@ -93,7 +93,7 @@ export default function LandingPage() {
             One shared workspace for vendors and clients — AI proposals, signed scope,
             milestone proofs, change orders, and Stripe payments. No more invoice disputes.
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-4">
             <Link
               href="/login"
               className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-8 py-4 rounded-xl transition-colors text-base"
@@ -107,6 +107,9 @@ export default function LandingPage() {
               See how it works
             </a>
           </div>
+          <Link href="/create" className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors">
+            Create free invoice →
+          </Link>
           <p className="text-slate-500 text-xs mt-4">No credit card · No password · Free forever for 3 deals</p>
         </div>
 
