@@ -20,20 +20,27 @@ export default function MessageThread({ dealId, token, messages: initial }: Prop
   const [messages, setMessages] = useState<Message[]>(initial)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
 
   async function handleSend() {
     if (!draft.trim()) return
     setSending(true)
+    setSendError('')
     try {
       const res = await fetch(`/api/client/${token}/message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: draft.trim() }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error ?? `HTTP ${res.status}`)
+      }
       const { message } = await res.json()
       setMessages((prev) => [...prev, message])
       setDraft('')
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Failed to send')
     } finally {
       setSending(false)
     }
@@ -69,6 +76,8 @@ export default function MessageThread({ dealId, token, messages: initial }: Prop
               ))}
             </div>
           )}
+
+          {sendError && <p className="text-sm text-red-400">{sendError}</p>}
 
           <div className="flex gap-2">
             <input
